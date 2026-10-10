@@ -1,0 +1,10 @@
+'use strict';
+const d = require('../src/db');
+d.init();
+const tables = d.all("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").map((r) => r.name);
+console.log('Jadvalar:', tables.join(', '));
+console.log('Omborlar:', d.get('SELECT COUNT(*) c FROM catalog_warehouses').c);
+console.log('Foydalanuvchilar:', d.get('SELECT COUNT(*) c FROM users').c);
+console.log('Valyutalar:', d.all('SELECT code, rate FROM catalog_currencies').map((c) => `${c.code}=${c.rate}`).join(' '));
+console.log('Joylashuvlar:', d.get('SELECT COUNT(*) c FROM catalog_locations').c);
+console.log('OK');

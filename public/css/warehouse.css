@@ -1,0 +1,154 @@
+/* ==========================================================
+   2D ОМБОР ХАРИТАСИ / 2D СКЛАДСКАЯ КАРТА
+   Kinoteatr joylari (seat map) uslubida
+   ========================================================== */
+
+.wh-toolbar {
+  display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap;
+  padding: 11px 13px; background: var(--panel-2); border-bottom: 1px solid var(--line);
+}
+.wh-toolbar .fb-field { display: flex; flex-direction: column; gap: 3px; }
+.wh-toolbar .fb-field label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; font-weight: 700; }
+.wh-toolbar select, .wh-toolbar input {
+  padding: 5px 8px; border: 1px solid var(--line); border-radius: var(--r); min-width: 130px; background: #fff;
+}
+
+/* ------------------------------------------------ asosiy kompaniya */
+.wh-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 14px; align-items: start; }
+@media (max-width: 1400px) { .wh-layout { grid-template-columns: minmax(0, 1fr) 300px; } }
+@media (max-width: 1200px) { .wh-layout { grid-template-columns: 1fr; } }
+
+/* ------------------------------------------------ zona kartasi */
+.wh-zone {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 5px;
+  margin-bottom: 14px; box-shadow: var(--shadow); overflow: hidden;
+}
+.wh-zone-head {
+  background: linear-gradient(#f2f6fa, #e4ebf3); border-bottom: 1px solid var(--line);
+  padding: 7px 13px; display: flex; justify-content: space-between; align-items: center;
+  font-size: 13px; font-weight: 700; color: var(--head); gap: 14px; flex-wrap: wrap;
+}
+.wh-zone-head .z-letter {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; border-radius: 4px; background: var(--head); color: #fff;
+  font-weight: 800; margin-right: 8px;
+}
+.wh-zone-head .z-meta { font-weight: 400; color: var(--text-dim); font-size: 12px; }
+.wh-zone-body { padding: 13px; overflow-x: auto; }
+
+/* ------------------------------------------------ qator (ряд) */
+.wh-row { display: flex; align-items: center; gap: 9px; margin-bottom: 7px; min-width: max-content; }
+.wh-row-lbl {
+  width: 78px; flex: none; text-align: right; font-size: 11.5px; color: var(--text-dim);
+  font-weight: 700; line-height: 1.25;
+}
+.wh-row-lbl b { display: block; color: var(--head); font-size: 12px; }
+.wh-slots { display: flex; gap: 5px; }
+
+/* ------------------------------------------------ "joy" (seat / cell) */
+.seat {
+  position: relative; width: 78px; min-width: 78px; height: 56px;
+  border: 1.5px solid #b9c4d0; border-radius: 4px 4px 3px 3px;
+  background: #f4f6f9; cursor: pointer; padding: 3px 4px;
+  display: flex; flex-direction: column; justify-content: space-between;
+  transition: transform .1s, box-shadow .12s, background .12s;
+  overflow: hidden;
+}
+.seat::after {           /* "qator" chizig'i — kinoteatr uslubi */
+  content: ''; position: absolute; left: 4px; right: 4px; bottom: 3px; height: 2px;
+  background: #c4cdd8; border-radius: 2px;
+}
+.seat:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(16,32,48,.22); z-index: 3; }
+.seat .s-code { font-size: 8.5px; color: #7a8794; font-family: Consolas, monospace; line-height: 1.1; }
+.seat .s-sku { font-size: 10.5px; font-weight: 800; color: var(--text); line-height: 1.15;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.seat .s-name { font-size: 8px; color: #6d7a88; line-height: 1.1;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.seat .s-qty { font-size: 9.5px; font-weight: 700; text-align: right; line-height: 1; margin-bottom: 4px; }
+
+/* holatlar */
+.seat.empty { background: repeating-linear-gradient(45deg, #f2f4f7, #f2f4f7 4px, #e9edf2 4px, #e9edf2 8px); border-style: dashed; }
+.seat.empty .s-sku { color: #a7b1bd; font-weight: 500; }
+.seat.ok       { background: #e4f5ec; border-color: #7cc79e; }
+.seat.ok .s-qty { color: var(--ok); }
+.seat.low      { background: #fdf3e0; border-color: #e0b464; }
+.seat.low .s-qty { color: var(--warn); }
+.seat.full     { background: #e8f0f8; border-color: #8fb4d6; }
+.seat.over     { background: #fbe6e5; border-color: #dd8b86; }
+.seat.over .s-qty { color: var(--err); }
+.seat.multi    { background: linear-gradient(160deg, #eef3f9 0%, #e2eaf4 100%); border-color: #a8bfd6; }
+.seat.sel      { outline: 3px solid var(--head); outline-offset: 1px; transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(31,78,121,.4); z-index: 4; }
+.seat.hl       { outline: 2px dashed #d3a13a; outline-offset: 1px; }
+
+/* "band" (коридор) */
+.wh-aisle {
+  height: 20px; margin: 6px 0 6px 87px; border-radius: 3px;
+  background: repeating-linear-gradient(90deg, #dfe5ec, #dfe5ec 10px, #eef1f5 10px, #eef1f5 20px);
+  border: 1px dashed #c3ccd7; display: flex; align-items: center; justify-content: center;
+}
+.wh-aisle span { font-size: 9.5px; color: #8a97a5; letter-spacing: 2px; text-transform: uppercase; }
+
+/* ------------------------------------------------ ekran (stage) */
+.wh-stage {
+  margin: 0 0 16px 87px; padding: 8px; border-radius: 4px;
+  background: linear-gradient(#eef2f7, #dfe6ee); border: 1px solid var(--line);
+  text-align: center; font-size: 10.5px; color: #7a8794; letter-spacing: 3px; text-transform: uppercase;
+}
+
+/* ------------------------------------------------ yon panel */
+.wh-side { position: sticky; top: 0; }
+.wh-cell-detail .d-row { display: flex; justify-content: space-between; gap: 10px; padding: 4px 0;
+  border-bottom: 1px dashed var(--line-soft); font-size: 12.5px; }
+.wh-cell-detail .d-row:last-child { border-bottom: none; }
+.wh-cell-detail .d-row span:first-child { color: var(--text-dim); }
+.wh-cell-detail .d-row span:last-child { font-weight: 700; text-align: right; }
+
+.pick-mode .seat { cursor: crosshair; }
+.pick-mode .seat:hover { background: #d8ecff; border-color: var(--head); }
+.pick-mode .seat.picked { background: var(--head); border-color: #12324e; }
+.pick-mode .seat.picked .s-sku, .pick-mode .seat.picked .s-name, .pick-mode .seat.picked .s-code { color: #fff; }
+.pick-mode .seat.picked .s-qty { color: #cfe4f7; }
+.pick-mode .seat.picked::after { background: #7fb4e0; }
+
+.cell-chip {
+  display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px;
+  background: var(--head-soft); border: 1px solid #b5cfe6; border-radius: 11px;
+  font-size: 11.5px; font-family: Consolas, monospace; color: var(--head);
+}
+.cell-chip button { border: none; background: transparent; cursor: pointer; color: var(--err);
+  font-weight: 800; padding: 0 0 0 2px; }
+
+/* ------------------------------------------------ legenda */
+.wh-legend {
+  display: flex; gap: 14px; flex-wrap: wrap; padding: 9px 13px;
+  border-top: 1px solid var(--line); background: var(--panel-2); font-size: 11.5px; color: var(--text-dim);
+}
+.wh-legend i {
+  display: inline-block; width: 13px; height: 13px; border-radius: 3px;
+  border: 1.5px solid #b9c4d0; margin-right: 5px; vertical-align: -2px;
+}
+.wh-legend i.l-empty { background: repeating-linear-gradient(45deg, #f2f4f7, #f2f4f7 3px, #e9edf2 3px, #e9edf2 6px); }
+.wh-legend i.l-ok { background: #e4f5ec; border-color: #7cc79e; }
+.wh-legend i.l-low { background: #fdf3e0; border-color: #e0b464; }
+.wh-legend i.l-over { background: #fbe6e5; border-color: #dd8b86; }
+.wh-legend i.l-multi { background: linear-gradient(160deg, #eef3f9, #e2eaf4); border-color: #a8bfd6; }
+
+/* ------------------------------------------------ turlar / brendlar */
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); gap: 11px; }
+.tile {
+  background: #fff; border: 1px solid var(--line); border-left: 3px solid var(--head);
+  border-radius: var(--r); padding: 10px 13px; cursor: pointer; transition: .12s;
+}
+.tile:hover { box-shadow: var(--shadow); transform: translateY(-1px); }
+.tile.sel { border-color: var(--head); background: var(--head-soft); }
+.tile .t-name { font-weight: 700; font-size: 13.5px; margin-bottom: 3px; }
+.tile .t-meta { font-size: 11.5px; color: var(--text-dim); }
+.tile .t-qty { font-size: 17px; font-weight: 800; color: var(--head); margin-top: 5px; }
+.tile .t-amt { font-size: 11.5px; color: var(--text-dim); }
+.tile.brand { border-left-color: #7a5ea8; }
+.tile.brand .t-qty { color: #7a5ea8; }
+
+/* joy egallash ko'rsatkichi */
+.fill-bar { height: 5px; border-radius: 3px; background: var(--line-soft); overflow: hidden; margin-top: 6px; }
+.fill-bar i { display: block; height: 100%; background: var(--head-2); }

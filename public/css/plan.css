@@ -1,0 +1,187 @@
+﻿/* ==========================================================
+   2D БИНО РЕЖАСИ / 2D ПЛАН ЗДАНИЯ
+   Xona → Stellaj → Katak → Tovar (rasm bilan)
+   ========================================================== */
+
+/* ------------------------------------------------ 1-QAVAT: XONALAR */
+.building {
+  display: grid; gap: 14px; padding: 0;
+  background:
+    repeating-linear-gradient(0deg, #f4f6f8, #f4f6f8 22px, #eef1f4 22px, #eef1f4 44px),
+    #fff;
+  border: 2px solid #b9c4d0; border-radius: 6px;
+  position: relative; overflow: auto;
+  background-size: 100% 44px;
+}
+.building-grid { display: grid; gap: 10px; padding: 14px; position: relative; }
+
+.room {
+  border: 2px solid #8f9dab; border-radius: 4px; background: #fff;
+  cursor: pointer; position: relative; overflow: hidden;
+  min-height: 108px; display: flex; flex-direction: column;
+  transition: transform .12s, box-shadow .15s, border-color .15s;
+}
+.room:hover { transform: translateY(-2px); box-shadow: 0 8px 22px rgba(16,32,48,.24); border-color: var(--head); z-index: 3; }
+.room.sel { border-color: var(--head); box-shadow: 0 0 0 3px var(--info-bg); }
+
+.room-head {
+  padding: 4px 7px; font-size: 11.5px; font-weight: 700; color: #fff;
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+}
+.room-head .rn { font-family: Consolas, monospace; }
+.room-body { padding: 7px; flex: 1; display: flex; flex-direction: column; gap: 5px; }
+
+.rd { display: flex; justify-content: space-between; font-size: 11px; }
+.rd span:first-child { color: var(--text-dim); }
+.rd span:last-child { font-weight: 700; }
+
+.room-fill { height: 6px; border-radius: 3px; background: var(--line-soft); overflow: hidden; }
+.room-fill i { display: block; height: 100%; }
+
+/* xona turlari */
+.room-STORAGE    .room-head { background: #4a235a; }
+.room-RECEIVING  .room-head { background: #1a7f4b; }
+.room-SHIPPING   .room-head { background: #6c3483; }
+.room-COOLING    .room-head { background: #0d7d8c; }
+.room-QUARANTINE .room-head { background: #b26b00; }
+.room-BUFFER     .room-head { background: #6b5b95; }
+.room:not(.room-STORAGE):not(.room-RECEIVING):not(.room-SHIPPING):not(.room-COOLING):not(.room-QUARANTINE):not(.room-BUFFER) .room-head { background: var(--text-dim); }
+
+.room-mini { display: flex; flex-wrap: wrap; gap: 2px; margin-top: 3px; }
+.room-mini i {
+  width: 7px; height: 7px; border-radius: 1.5px; background: #dbe1e8; display: block;
+}
+.room-mini i.on { background: var(--ok); }
+.room-mini i.full { background: var(--head-2); }
+.room-mini i.low { background: var(--warn); }
+
+/* koridor */
+.corridor {
+  background: repeating-linear-gradient(90deg, #e3e8ed, #e3e8ed 12px, #eef1f4 12px, #eef1f4 24px);
+  border: 1px dashed #c3ccd7; border-radius: 3px; min-height: 26px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px; color: #8a97a5; letter-spacing: 3px; text-transform: uppercase;
+}
+.bldg-entrance {
+  background: linear-gradient(#eef2f7, #dfe6ee); border: 1px solid var(--line);
+  border-radius: 3px; text-align: center; padding: 5px; font-size: 11px;
+  color: var(--head); font-weight: 700; letter-spacing: 2px; text-transform: uppercase;
+}
+
+/* ------------------------------------------------ 2-QAVAT: XONA ICHI */
+.room-view { display: grid; grid-template-columns: 1fr 340px; gap: 14px; align-items: start; }
+@media (max-width: 1250px) { .room-view { grid-template-columns: 1fr; } }
+
+.racks { display: flex; flex-direction: column; gap: 11px; }
+.rack {
+  background: #fff; border: 1.5px solid #9aa7b4; border-radius: 4px; overflow: hidden;
+  box-shadow: var(--shadow);
+}
+.rack-head {
+  background: linear-gradient(#f2f6fa, #e4ebf3); border-bottom: 1px solid var(--line);
+  padding: 5px 11px; display: flex; justify-content: space-between; align-items: center;
+  font-size: 12.5px; font-weight: 700; color: var(--head);
+}
+.rack-head .code { font-family: Consolas, monospace; }
+.rack-body { padding: 9px 11px; background: #fafbfd; }
+
+.shelf { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.shelf:last-child { margin-bottom: 0; }
+.shelf-lbl {
+  width: 54px; flex: none; font-size: 10.5px; color: var(--text-dim);
+  text-align: right; font-weight: 700; line-height: 1.2;
+}
+.shelf-cells { display: flex; gap: 5px; flex-wrap: wrap; }
+
+/* katak */
+.cell {
+  width: 82px; border: 1.5px solid #b9c4d0; border-radius: 4px;
+  background: #f4f6f9; cursor: pointer; overflow: hidden; position: relative;
+  transition: transform .1s, box-shadow .12s;
+  display: flex; flex-direction: column;
+}
+.cell:hover { transform: translateY(-2px); box-shadow: 0 5px 14px rgba(16,32,48,.26); z-index: 4; }
+.cell .c-img {
+  height: 46px; background: #e9edf2 center/contain no-repeat;
+  display: flex; align-items: center; justify-content: center; font-size: 20px;
+}
+.cell .c-img img { width: 100%; height: 100%; object-fit: contain; background: #fff; display: block; }
+.cell .c-sku {
+  font-size: 9.5px; font-weight: 800; padding: 2px 4px 0; text-align: center;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-family: Consolas, monospace;
+}
+.cell .c-qty {
+  font-size: 9.5px; font-weight: 800; text-align: center; padding: 0 4px 3px;
+}
+.cell.empty { background: repeating-linear-gradient(45deg, #f2f4f7, #f2f4f7 4px, #e9edf2 4px, #e9edf2 8px); border-style: dashed; }
+.cell.empty .c-img { font-size: 15px; opacity: .3; }
+.cell.empty .c-sku, .cell.empty .c-qty { color: #a7b1bd; font-weight: 500; }
+.cell.ok   { background: #e4f5ec; border-color: #7cc79e; } .cell.ok .c-qty { color: var(--ok); }
+.cell.low  { background: #fdf3e0; border-color: #e0b464; } .cell.low .c-qty { color: var(--warn); }
+.cell.over { background: #fbe6e5; border-color: #dd8b86; } .cell.over .c-qty { color: var(--err); }
+.cell.multi { background: linear-gradient(160deg, #eef3f9, #e2eaf4); border-color: #a8bfd6; }
+.cell.multi .c-qty { color: var(--head); }
+.cell .c-badge {
+  position: absolute; top: 2px; right: 2px; background: rgba(0,0,0,.6); color: #fff;
+  font-size: 8.5px; padding: 0 3px; border-radius: 7px; font-weight: 700;
+}
+
+/* ------------------------------------------------ 3-QAVAT: TOVAR KARTASI */
+.pcard { display: grid; grid-template-columns: 210px 1fr; gap: 16px; }
+@media (max-width: 700px) { .pcard { grid-template-columns: 1fr; } }
+
+.pcard-img {
+  background: #eef1f5 center/contain no-repeat; border: 1px solid var(--line);
+  border-radius: 6px; aspect-ratio: 1; display: flex; align-items: center;
+  justify-content: center; font-size: 62px; overflow: hidden; position: relative;
+}
+.pcard-img img { width: 100%; height: 100%; object-fit: contain; }
+.pcard-img .noimg { color: #a7b1bd; }
+
+.pcard-title { font-size: 19px; font-weight: 700; margin: 0 0 4px; }
+.pcard-sku { font-family: Consolas, monospace; color: var(--text-dim); font-size: 13px; }
+.pcard-badges { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0 12px; }
+.pcard-kpi { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 9px; margin: 11px 0; }
+.pcard-kpi .k {
+  background: var(--panel-2); border: 1px solid var(--line-soft); border-radius: 4px;
+  padding: 7px 10px;
+}
+.pcard-kpi .k .l { font-size: 10.5px; color: var(--text-dim); text-transform: uppercase; }
+.pcard-kpi .k .v { font-size: 17px; font-weight: 800; margin-top: 2px; }
+
+.place-item {
+  display: flex; align-items: center; gap: 9px; padding: 7px 9px;
+  border: 1px solid var(--line-soft); border-radius: 4px; margin-bottom: 6px;
+  background: #fff; font-size: 12.5px;
+}
+.place-item:hover { background: var(--info-bg); }
+.place-item .p-img {
+  width: 34px; height: 34px; border-radius: 4px; background: #e9edf2 center/contain no-repeat;
+  flex: none; display: flex; align-items: center; justify-content: center; font-size: 16px;
+}
+.place-item .p-img img { width: 100%; height: 100%; object-fit: contain; background: #fff; border-radius: 4px; }
+.place-item .p-txt { flex: 1; min-width: 0; }
+.place-item .p-qty { font-weight: 800; white-space: nowrap; }
+
+/* rasm yuklash */
+.img-upload {
+  display: flex; gap: 10px; align-items: center;
+}
+.img-upload .prev {
+  width: 74px; height: 74px; border: 1px dashed var(--line); border-radius: 5px;
+  background: #eef1f5 center/cover no-repeat; display: flex; align-items: center;
+  justify-content: center; font-size: 26px; color: #a7b1bd; flex: none; overflow: hidden;
+}
+.img-upload .prev img { width: 100%; height: 100%; object-fit: cover; }
+.img-upload .col { flex: 1; display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.img-upload .col input[type=text] {
+  padding: 5px 8px; border: 1px solid var(--line); border-radius: 3px; width: 100%;
+}
+
+/* tanlangan xona navigatsiyasi */
+.crumb { display: flex; align-items: center; gap: 6px; font-size: 12.5px; margin-bottom: 10px; flex-wrap: wrap; }
+.crumb a { cursor: pointer; color: var(--head-2); }
+.crumb a:hover { text-decoration: underline; }
+.crumb .sep { color: var(--text-dim); }
+.crumb .cur { font-weight: 700; color: var(--text); }
