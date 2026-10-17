@@ -448,8 +448,21 @@ table.grid tr.row-ok { background: var(--ok-bg) !important; }
 .mini-chart .bar.in { background: var(--ok); }
 .mini-chart .bar.out { background: var(--head-2); }
 .mini-chart .bar:hover { opacity: .7; }
-.legend { display: flex; gap: 14px; font-size: 11.5px; color: var(--text-dim); justify-content: center; }
+.legend { display: flex; gap: 14px; font-size: 11.5px; color: var(--text-dim); justify-content: center; flex-wrap: wrap; }
 .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; }
+
+/* ---- kunlik sotuvlar (xodimlar kesimidagi ustunli diagramma) */
+.sales-chart { display: flex; align-items: flex-end; gap: 3px; height: 150px; padding: 6px 0; }
+.sales-chart .sc-day { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; height: 100%; min-width: 6px; }
+.sales-chart .sc-stack { display: flex; flex-direction: column-reverse; width: 100%; min-height: 0; }
+.sales-chart .sc-seg { width: 100%; min-height: 1px; transition: .15s; }
+.sales-chart .sc-seg:hover { opacity: .65; }
+.sales-chart .sc-day:hover { background: var(--head-6); border-radius: 2px; }
+.sc-axis { display: flex; gap: 3px; margin-top: 6px; }
+.sc-axis span { flex: 1; min-width: 6px; text-align: center; font-size: 9px; color: var(--text-dim); white-space: nowrap; overflow: hidden; }
+.sc-tip { position: absolute; z-index: 60; background: var(--head); color: #fff; padding: 6px 9px;
+  border-radius: 5px; font-size: 11.5px; pointer-events: none; white-space: nowrap;
+  box-shadow: 0 3px 12px rgba(0,0,0,.25); }
 
 .alert-item {
   display: flex; justify-content: space-between; align-items: center; gap: 12px;

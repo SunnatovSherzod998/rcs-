@@ -225,7 +225,7 @@ export function buildForm(fields, values = {}, refs = {}) {
         : f.type === 'date' ? 'date' : f.type === 'textarea' ? 'textarea' : 'text';
       input = h(inputType === 'textarea' ? 'textarea' : 'input', {
         id, type: inputType === 'textarea' ? null : inputType,
-        step: f.step || (f.type === 'money' ? '0.01' : 'any'),
+        step: f.step || (f.type === 'int' ? '1' : f.type === 'money' ? '0.01' : 'any'),
         rows: f.type === 'textarea' ? 3 : null,
         value: values[f.name] ?? '',
         placeholder: f.hint ? tl(f.hint) : '',

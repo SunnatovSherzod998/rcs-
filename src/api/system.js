@@ -7,7 +7,7 @@ const path = require('node:path');
 const { all, get, run, tx, audit, setSetting, DATA_DIR, DB_FILE } = require('../db');
 const { bad, notFound, forbidden } = require('../lib/http');
 const { hashPassword, verifyPassword, randomToken } = require('../lib/crypto');
-const { CATALOGS } = require('./catalogs');
+const { CATALOGS, positionPerms } = require('./catalogs');
 
 const ROLES = {
   ADMIN:             { uz: 'Administrator',   ru: 'Администратор' },
@@ -18,6 +18,7 @@ const ROLES = {
 
 const PERMISSIONS = {
   ADMIN: ['*'],
+  // Xodimlar + foydalanuvchi akkauntlari — faqat ADMIN ('employees.write')
   WAREHOUSE_MANAGER: [
     'catalogs.read', 'catalogs.write', 'locations.read',
     'documents.read', 'documents.write', 'documents.post',
@@ -54,6 +55,27 @@ function destroySession(token) { sessions.delete(token); }
 function can(role, perm) {
   const list = PERMISSIONS[role] || [];
   return list.includes('*') || list.includes(perm);
+}
+
+/**
+ * Foydalanuvchining amaldagi huquqlari = rol huquqlari + lavozim huquqlari.
+ * Xodim katalogida lavozim "Kassir" bo'lsa, sotish (pos.use) avtomatik beriladi.
+ */
+function permsOf(user) {
+  if (!user) return [];
+  const base = PERMISSIONS[user.role] || [];
+  if (base.includes('*')) return base;
+
+  const emp = user.employee_id
+    ? get('SELECT position FROM catalog_employees WHERE id=?', user.employee_id)
+    : null;
+  const extra = positionPerms(emp?.position);
+  if (!extra.length) return base;
+  if (extra.includes('*')) return ['*'];
+
+  const set = new Set(base);
+  for (const p of extra) set.add(p);
+  return [...set];
 }
 
 function publicUser(u) {
@@ -125,9 +147,10 @@ function register(router) {
     const wh = u.warehouse_id
       ? get('SELECT id, code, name_ru, name_uz FROM catalog_warehouses WHERE id=?', u.warehouse_id)
       : null;
+    const permissions = permsOf(u);
     return {
       token, user: publicUser(u), warehouse: wh,
-      permissions: PERMISSIONS[u.role] || [], role_label: ROLES[u.role] || null,
+      permissions, role_label: ROLES[u.role] || null,
     };
   }, { auth: false });
 
@@ -139,7 +162,7 @@ function register(router) {
 
   router.get('/api/auth/me', (ctx) => ({
     user: ctx.user,
-    permissions: PERMISSIONS[ctx.user.role] || [],
+    permissions: permsOf(ctx.user),
     role_label: ROLES[ctx.user.role] || null,
   }));
 
@@ -220,7 +243,7 @@ function register(router) {
   router.get('/api/users', () => all('SELECT * FROM users ORDER BY id').map(publicUser), { roles: ['ADMIN'] });
 
   router.post('/api/users', (ctx) => {
-    const { login, password, full_name, role, warehouse_id, allowed_features } = ctx.body || {};
+    const { login, password, full_name, role, warehouse_id, allowed_features, employee_id } = ctx.body || {};
     if (!login || !password) throw bad('Login va parol kerak / Нужны логин и пароль');
     if (get('SELECT id FROM users WHERE lower(login)=lower(?)', login)) {
       throw bad('Bu login band / Такой логин уже занят');
@@ -229,13 +252,33 @@ function register(router) {
       ? JSON.stringify(allowed_features)
       : (allowed_features || null);
     const { hash, salt } = hashPassword(password);
+
+    // Foydalanuvchi xodimga bog'lanmagan bo'lsa — avtomatik xodim yaratamiz.
+    // Shu sababli "Xodim (sotuvlar uchun)" maydonini forma'da ko'rsatish shart emas.
+    let empId = employee_id || null;
+    let autoEmployee = null;
+    if (!empId) {
+      const empName = full_name || login;
+      const code = 'U' + String(login).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8)
+        + '-' + Date.now().toString(36).slice(-3).toUpperCase();
+      const pos = role === 'CASHIER' ? 'CASHIER' : (role === 'OBSERVER' ? 'Kuzatuvchi' : 'Ombor mudiri');
+      empId = Number(run(
+        `INSERT INTO catalog_employees (code, name_uz, name_ru, position, warehouse_id, is_active)
+         VALUES (?,?,?,?,?,1)`,
+        code, empName, empName, pos, warehouse_id || null
+      ).lastInsertRowid);
+      autoEmployee = empId;
+    }
+
     const res = run(
-      'INSERT INTO users (login, password_hash, salt, full_name, role, warehouse_id, allowed_features) VALUES (?,?,?,?,?,?,?)',
-      login, hash, salt, full_name || login, role || 'OBSERVER', warehouse_id || null, featStr
+      'INSERT INTO users (login, password_hash, salt, full_name, role, warehouse_id, allowed_features, employee_id) VALUES (?,?,?,?,?,?,?,?)',
+      login, hash, salt, full_name || login, role || 'OBSERVER', warehouse_id || null, featStr, empId
     );
     const id = Number(res.lastInsertRowid);
-    audit(ctx.user, 'USER_CREATE', 'user', id, { login });
-    return publicUser(get('SELECT * FROM users WHERE id=?', id));
+    audit(ctx.user, 'USER_CREATE', 'user', id, { login, employee_id: empId, auto: !!autoEmployee });
+    const out = publicUser(get('SELECT * FROM users WHERE id=?', id));
+    if (autoEmployee) out.auto_employee_id = autoEmployee;
+    return out;
   }, { roles: ['ADMIN'] });
 
   router.put('/api/users/:id', (ctx) => {
@@ -247,11 +290,13 @@ function register(router) {
       ? (Array.isArray(b.allowed_features) ? JSON.stringify(b.allowed_features) : b.allowed_features)
       : u.allowed_features;
     run(
-      'UPDATE users SET full_name=?, role=?, warehouse_id=?, is_active=?, allowed_features=? WHERE id=?',
+      'UPDATE users SET full_name=?, role=?, warehouse_id=?, is_active=?, allowed_features=?, employee_id=? WHERE id=?',
       b.full_name ?? u.full_name, b.role ?? u.role,
       b.warehouse_id === undefined ? u.warehouse_id : b.warehouse_id,
       b.is_active === undefined ? u.is_active : (b.is_active ? 1 : 0),
-      featStr, id
+      featStr,
+      b.employee_id === undefined ? u.employee_id : (b.employee_id || null),
+      id
     );
     if (b.password) {
       const { hash, salt } = hashPassword(b.password);
@@ -399,9 +444,87 @@ function register(router) {
   router.get('/api/system/audit', (ctx) =>
     all('SELECT * FROM audit_log ORDER BY id DESC LIMIT ?', Math.min(Number(ctx.query.limit) || 200, 2000)),
     { roles: ['ADMIN'] });
+
+  // ------------------------------------------------------------ Mening statistikam
+  // Kassir/ishchi uchun — FAQAT o'z statistikasi (o'zgartirish huquqi yo'q)
+  router.get('/api/my-stats', (ctx) => {
+    const empId = ctx.user.employee_id || null;
+    if (!empId) return { employee: null, rows: [], month: { qty: 0, amount: 0, docs: 0 } };
+
+    const emp = get('SELECT * FROM catalog_employees WHERE id=?', empId);
+    if (!emp) return { employee: null, rows: [], month: { qty: 0, amount: 0, docs: 0 } };
+
+    const month = new Date().toISOString().slice(0, 7);
+    const m = get(
+      `SELECT COUNT(*) AS docs, COALESCE(SUM(total_qty),0) AS qty, COALESCE(SUM(total_amount),0) AS amount
+         FROM documents
+        WHERE employee_id = ? AND type='ISSUE' AND status='POSTED' AND base_type='SALE'
+          AND substr(date,1,7) = ?`,
+      empId, month
+    );
+    const total = get(
+      `SELECT COUNT(*) AS docs, COALESCE(SUM(total_qty),0) AS qty, COALESCE(SUM(total_amount),0) AS amount
+         FROM documents
+        WHERE employee_id = ? AND type='ISSUE' AND status='POSTED' AND base_type='SALE'`,
+      empId
+    );
+
+    // kunlik (90 kun) — diagramma uchun
+    const daily = all(
+      `SELECT date, SUM(total_qty) AS qty, SUM(total_amount) AS amount, COUNT(*) AS docs
+         FROM documents
+        WHERE employee_id = ? AND type='ISSUE' AND status='POSTED' AND base_type='SALE'
+          AND date >= date('now','-89 days')
+        GROUP BY date ORDER BY date`,
+      empId
+    );
+
+    const sales = m.amount || 0;
+    const limit = emp.sales_limit || 0;
+    const over = Math.max(0, sales - limit);
+    const bonus = Math.round(over * (emp.bonus_percent || 0) / 100);
+
+    return {
+      employee: {
+        id: emp.id, name_uz: emp.name_uz, name_ru: emp.name_ru, position: emp.position,
+        base_salary: emp.base_salary, sales_limit: emp.sales_limit, bonus_percent: emp.bonus_percent,
+      },
+      month: { ...m, month },
+      total,
+      daily,
+      bonus: { over_limit: over, amount: bonus, rate: emp.bonus_percent || 0 },
+    };
+  });
+
+  // ------------------------------------------------------------ Ishchilar oyligi
+  const salary = require('../services/salary');
+
+  // Ishchilar ro'yxati + oylik + sotuv + bonus
+  router.get('/api/salary/list', (ctx) => salary.salaryList(), { roles: ['ADMIN'] });
+
+  // Xodim bonus tarixi
+  router.get('/api/salary/history/:id', (ctx) =>
+    salary.bonusHistory(Number(ctx.params.id)), { roles: ['ADMIN'] });
+
+  // Xodim oylik/limit/bonusini sozlash
+  router.put('/api/salary/:id', (ctx) => {
+    const id = Number(ctx.params.id);
+    const emp = get('SELECT * FROM catalog_employees WHERE id=?', id);
+    if (!emp) throw notFound('Xodim topilmadi / Сотрудник не найден');
+    const b = ctx.body || {};
+    run(
+      `UPDATE catalog_employees SET base_salary=?, sales_limit=?, bonus_percent=? WHERE id=?`,
+      Math.max(0, Number(b.base_salary ?? emp.base_salary) || 0),
+      Math.max(0, Number(b.sales_limit ?? emp.sales_limit) || 0),
+      Math.min(100, Math.max(0, Number(b.bonus_percent ?? emp.bonus_percent) || 0)),
+      id
+    );
+    audit(ctx.user, 'SALARY_UPDATE', 'employee', id, { base_salary: b.base_salary, sales_limit: b.sales_limit, bonus_percent: b.bonus_percent });
+    return get('SELECT * FROM catalog_employees WHERE id=?', id);
+  }, { roles: ['ADMIN'] });
 }
 
 module.exports = {
-  register, createSession, readSession, destroySession, can,
+  register, createSession, readSession, destroySession, can, permsOf,
   ROLES, PERMISSIONS, toCsv, parseCsvLine, publicUser,
 };

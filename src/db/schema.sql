@@ -187,8 +187,27 @@ CREATE TABLE IF NOT EXISTS catalog_employees (
   position      TEXT,
   phone         TEXT,
   warehouse_id  INTEGER REFERENCES catalog_warehouses(id) ON DELETE SET NULL,
-  is_active     INTEGER NOT NULL DEFAULT 1
+  is_active     INTEGER NOT NULL DEFAULT 1,
+  base_salary   REAL NOT NULL DEFAULT 0,        -- asosiy oylik
+  sales_limit   REAL NOT NULL DEFAULT 0,        -- oylik sotuv limiti (0 = cheksiz)
+  bonus_percent REAL NOT NULL DEFAULT 0,        -- limitdan oshgan summaga bonus foizi
+  bonus_total   REAL NOT NULL DEFAULT 0         -- jami berilgan bonus
 );
+
+-- Ishchilar bonus harakati (append-only)
+CREATE TABLE IF NOT EXISTS reg_employee_bonuses (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  employee_id    INTEGER NOT NULL REFERENCES catalog_employees(id) ON DELETE CASCADE,
+  document_id    INTEGER REFERENCES documents(id) ON DELETE CASCADE,
+  date           TEXT NOT NULL,
+  doc_type       TEXT NOT NULL,                 -- ISSUE (sotuv)
+  sale_amount    REAL NOT NULL DEFAULT 0,       -- sotuv summasi
+  over_limit     REAL NOT NULL DEFAULT 0,       -- limitdan oshgan summa
+  bonus_amount   REAL NOT NULL DEFAULT 0,       -- berilgan bonus
+  note           TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_emp_bonus_emp ON reg_employee_bonuses(employee_id);
+CREATE INDEX IF NOT EXISTS ix_emp_bonus_date ON reg_employee_bonuses(date);
 
 -- Пользователи (foydalanuvchilar)
 CREATE TABLE IF NOT EXISTS users (

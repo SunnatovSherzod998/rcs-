@@ -65,11 +65,51 @@ function register(router) {
          FROM reg_stock_movements WHERE 1=1 ${wh ? 'AND warehouse_id = ?' : ''}
         GROUP BY date ORDER BY date DESC LIMIT 30`, ...whArgs
     );
+
+    // Ishchilar bo'yicha sotuvlar (joriy oy) — limit va bonus uchun
+    const month = new Date().toISOString().slice(0, 7);
+    const empSales = all(
+      `SELECT e.id, e.name_uz, e.name_ru, e.position, e.sales_limit, e.bonus_percent,
+              e.base_salary,
+              COALESCE(SUM(d.total_amount), 0) AS month_sales,
+              COUNT(d.id) AS doc_count
+         FROM catalog_employees e
+         LEFT JOIN documents d
+                ON d.employee_id = e.id
+               AND d.type = 'ISSUE' AND d.status = 'POSTED' AND d.base_type = 'SALE'
+               AND substr(d.date, 1, 7) = ?
+                ${wh ? 'AND d.warehouse_id = ?' : ''}
+        WHERE e.is_active = 1
+        GROUP BY e.id
+        ORDER BY month_sales DESC
+        LIMIT 10`,
+      month, ...whArgs
+    );
+
+    // Kunlik sotuvlar — xodimlar bo'yicha (oxirgi 30 kun)
+    const salesByEmpDay = all(
+      `SELECT d.date, d.employee_id,
+              e.name_uz, e.name_ru,
+              SUM(d.total_qty) AS qty,
+              SUM(d.total_amount) AS amount,
+              COUNT(d.id) AS docs
+         FROM documents d
+         JOIN catalog_employees e ON e.id = d.employee_id
+        WHERE d.type = 'ISSUE' AND d.status = 'POSTED' AND d.base_type = 'SALE'
+          AND d.employee_id IS NOT NULL
+          AND d.date >= date('now', '-89 days')
+          ${wh ? 'AND d.warehouse_id = ?' : ''}
+        GROUP BY d.date, d.employee_id
+        ORDER BY d.date DESC, qty DESC`,
+      ...whArgs
+    );
+
     return {
       totals, products: products.c, warehouses: warehouses.c,
       counterparties: counterparties.c, drafts: drafts.c,
       below_min: belowMin, negative_count: neg.c,
       debt_total: debt.debt, debt_by_party: debtByParty, recent, chart,
+      emp_sales: empSales, sales_by_emp_day: salesByEmpDay,
     };
   });
 

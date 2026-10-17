@@ -9,6 +9,7 @@
  */
 const { all, get, run, tx, nextNumber } = require('../db');
 const { HttpError } = require('../lib/http');
+const salary = require('./salary');
 
 const TYPE = {
   OPENING:   'RECEIPT',   // Начальные остатки
@@ -146,6 +147,26 @@ function checkNegative(lines, warehouseId) {
 }
 
 // ---------------------------------------------------------------- documents
+
+/**
+ * Hujjatning xodimini aniqlaydi:
+ *   1) forma orqali qo'lda tanlangan xodim
+ *   2) joriy foydalanuvchiga bog'langan xodim (users.employee_id)
+ *   3) kassir bo'lmasa — oxirgi xodim (POS uchun qulaylik)
+ */
+function employeeOf(data, user) {
+  if (data.employee_id) return Number(data.employee_id);
+  if (user?.employee_id) return Number(user.employee_id);
+  // POS/kassa: rol bo'yicha xodimni avtomatik tanlash
+  const roleEmp = get(
+    `SELECT e.id FROM catalog_employees e
+      JOIN users u ON u.employee_id = e.id
+     WHERE u.id = ?`, user?.id ?? 0
+  );
+  if (roleEmp) return roleEmp.id;
+  const last = get(`SELECT id FROM catalog_employees WHERE is_active = 1 ORDER BY id LIMIT 1`);
+  return last ? last.id : null;
+}
 
 function recalcTotals(docId) {
   const doc = get('SELECT * FROM documents WHERE id=?', docId);
@@ -391,7 +412,11 @@ function post(docId, user) {
       "UPDATE documents SET status='POSTED', posted_at=datetime('now','localtime'), posted_by=? WHERE id=?",
       user?.id ?? null, docId
     );
-    return { ok: true, document: t, status: 'POSTED' };
+
+    // Ishchi bonusi (limitdan oshgan sotuv uchun)
+    const bonusInfo = salary.applyBonus(t);
+
+    return { ok: true, document: t, status: 'POSTED', bonus: bonusInfo };
   });
 }
 
@@ -416,7 +441,9 @@ function unpost(docId, user) {
       "UPDATE documents SET status='DRAFT', posted_at=NULL, posted_by=NULL WHERE id=?",
       docId
     );
-    return { ok: true, document: get('SELECT * FROM documents WHERE id=?', docId), status: 'DRAFT' };
+    // Ishchi bonusini o'chirish (agar edi)
+    const bonusInfo = salary.applyBonus(doc, true);
+    return { ok: true, document: get('SELECT * FROM documents WHERE id=?', docId), status: 'DRAFT', bonus_removed: bonusInfo };
   });
 }
 
@@ -442,7 +469,7 @@ function createDocument(data, user) {
        VALUES (?,?,?, 'DRAFT', ?,?,?,?,?,?,?,?,?)`,
       type, number, date,
       data.warehouse_id ?? null, data.dest_warehouse_id ?? null, data.counterparty_id ?? null,
-      data.employee_id ?? null, currencyId, rate, data.reason ?? null,
+      employeeOf(data, user), currencyId, rate, data.reason ?? null,
       data.base_type ?? null, data.note ?? null
     );
     const docId = Number(res.lastInsertRowid);

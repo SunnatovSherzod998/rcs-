@@ -278,7 +278,7 @@ export async function posPage(root) {
           h('th', { class: 'num', text: uz() ? 'Summa' : 'Сумма' }),
           h('th', {}))),
         h('tbody', {}, ...state.cart.map((l) => {
-          const iQty = h('input', { type: 'number', min: 0.001, step: '0.001', value: l.qty,
+          const iQty = h('input', { type: 'number', min: 1, step: '1', value: l.qty,
             class: 'pos-qty' });
           iQty.addEventListener('change', () => {
             const v = Number(iQty.value);

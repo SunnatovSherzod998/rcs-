@@ -10,7 +10,6 @@ import { posPage } from './pages/pos.js';
 import { catalogPage } from './pages/catalog.js';
 import { journalPage } from './pages/journal.js';
 import { openEditor } from './pages/editor.js';
-import { mapPage } from './pages/map.js';
 import { planPage } from './pages/plan.js';
 import {
   balancesPage, movementsPage, turnoverPage, debtPage, pricesPage, productCard,
@@ -20,6 +19,8 @@ import {
   writeoffReport, invDiffReport, belowMinReport, auditReport,
 } from './pages/reports.js';
 import { usersPage, settingsPage, dataPage } from './pages/system.js';
+import { employeePage, salaryPage } from './pages/salary.js';
+import { myStatsPage } from './pages/mystats.js';
 import { loadFeatures, feat, clearFeatures, DOC_FEAT } from './features.js';
 
 // ------------------------------------------------------------ MENU
@@ -27,10 +28,10 @@ import { loadFeatures, feat, clearFeatures, DOC_FEAT } from './features.js';
 const MENU = [
   { key: 'pos', feat: 'pos', icon: '🛒', label: 'm_pos', perm: 'pos.use' },
   { key: 'dashboard', feat: 'boshqaruv_paneli', icon: '▦', label: 'm_dashboard', perm: null },
+  { key: 'my/stats', feat: 'xodimlar', icon: '📈', label: 'my_stats', perm: null, hideAdmin: true },
   { group: 'm_catalogs' },
   { key: 'cat/products', feat: 'nomenklatura', icon: '☰', label: 'm_products', perm: 'catalogs.read' },
   { key: 'cat/warehouses', feat: 'omborlar', icon: '🏢', label: 'm_warehouses', perm: 'catalogs.read' },
-  { key: 'plan', feat: 'bino_reja', icon: '🏬', label: 'm_plan', perm: 'registers.read' },
   { key: 'cat/locations', feat: 'joylashuvlar', icon: '▤', label: 'm_locations', perm: 'locations.read' },
   { key: 'cat/counterparties', feat: 'kontragentlar', icon: '👤', label: 'm_counterparties', perm: 'catalogs.read' },
   { key: 'cat/categories', feat: 'toifalar', icon: '◈', label: 'm_categories', perm: 'catalogs.read' },
@@ -51,7 +52,6 @@ const MENU = [
   { key: 'doc/OPENING', feat: 'boshlangich', icon: '⏱', label: 'm_opening', perm: 'documents.read' },
 
   { group: 'm_registers' },
-  { key: 'map/2d', feat: 'xarita2d', icon: '▩', label: 'm_map2d', perm: 'registers.read' },
   { key: 'reg/balances', feat: 'qoldiqlar', icon: '▦', label: 'm_balances', perm: 'registers.read' },
   { key: 'reg/movements', feat: 'harakatlar', icon: '⇅', label: 'm_movements', perm: 'registers.read' },
   { key: 'reg/turnover', feat: 'aylanma', icon: '🧾', label: 'm_turnover', perm: 'registers.read' },
@@ -95,7 +95,7 @@ const ROUTES = {
   'cat/categories': (root) => catalogPage('categories', root),
   'cat/brands': (root) => catalogPage('brands', root),
   'cat/units': (root) => catalogPage('units', root),
-  'cat/employees': (root) => catalogPage('employees', root),
+  'cat/employees': (root) => employeePage(root),
   'cat/currencies': (root) => catalogPage('currencies', root),
 
   'doc/jour': (root) => journalPage(root, null),
@@ -108,7 +108,6 @@ const ROUTES = {
   'doc/PAYMENT': (root) => journalPage(root, 'PAYMENT'),
   'doc/OPENING': (root) => journalPage(root, 'OPENING'),
 
-  'map/2d': (root) => mapPage(root),
   'plan': (root) => planPage(root),
   'reg/balances': (root) => balancesPage(root),
   'reg/movements': (root) => movementsPage(root),
@@ -126,6 +125,8 @@ const ROUTES = {
   'rep/audit': (root) => auditReport(root),
 
   'sys/users': (root) => usersPage(root),
+  'sys/salary': (root) => salaryPage(root),
+  'my/stats': (root) => myStatsPage(root),
   'sys/data': (root) => dataPage(root),
   'sys/audit': (root) => auditReport(root),
   'sys/settings': (root) => settingsPage(root),
@@ -229,6 +230,7 @@ export function buildMenu() {
       continue;
     }
     if (item.admin && !auth.isAdmin) continue;
+    if (item.hideAdmin && auth.isAdmin) continue;   // admin o'z statistasini "Ishchilar oyligi" da ko'radi
     if (item.feat && !feat(item.feat)) continue;
     if (item.perm && !auth.can(item.perm)) continue;
 

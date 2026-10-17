@@ -6,9 +6,10 @@ import { api, auth } from '../api.js';
 import { t, tl, getLang, fn } from '../i18n.js';
 import {
   h, card, dataTable, pageHead, btn, iconBtn, modal, buildForm, confirmDialog,
-  toast, spinner, num, fmtDate, qtyFmt, today,
+  toast, spinner, num, fmtDate, qtyFmt, today, money,
 } from '../ui.js';
-import { productThumb } from './pcard.js';
+import { openEditModal, openHistoryModal } from './salary.js';
+
 
 let metaCache = null;
 export async function loadMeta(force) {
@@ -342,7 +343,7 @@ export async function catalogPage(catKey, root) {
     async function addProductToCell(c, warehouseId) {
       const prods = await api.get('/api/catalogs/products/options', { limit: 2000 });
       const fProd = h('select', {}, ...prods.map((p) => h('option', { value: p.id, text: `${p.code} · ${fn(p, 'name_uz', 'name_ru')}` })));
-      const fQty = h('input', { type: 'number', step: '0.001', value: 1 });
+      const fQty = h('input', { type: 'number', step: '1', min: '1', value: 1 });
       const fPrice = h('input', { type: 'number', step: '0.01', value: 0 });
       modal({
         title: (getLang() === 'uz' ? 'Yacheykaga tovar' : 'Товар в ячейку') + ' · ' + c.code,
@@ -436,7 +437,7 @@ export async function catalogPage(catKey, root) {
           fld(L.wh, fDest), fld(L.room, fRoom), fld(L.rack, fRack),
           fld(L.row, fRow), fld(L.cell, fCell)),
         ...items.map((it) => {
-          const inp = h('input', { type: 'number', step: '0.001', value: it.qty, style: { width: '90px' } });
+          const inp = h('input', { type: 'number', step: '1', min: '0', value: it.qty, style: { width: '90px' } });
           qtyInputs.set(it, inp);
           return h('div', { class: 'place-item', style: { marginTop: '6px' } },
             h('div', { class: 'p-img' }, it.image_url ? h('img', { src: it.image_url, alt: '' }) : h('span', { text: '📦' })),
@@ -479,6 +480,10 @@ export async function catalogPage(catKey, root) {
   root.append(pageHead(tl(spec.label),
     `${num(state.total)} ${t('total').toLowerCase()}`,
     auth.can('catalogs.write') ? btn(t('add'), { icon: '＋', cls: 'btn-primary', onClick: () => formEditor(catKey, spec, null) }) : null,
+    catKey === 'employees' && !auth.isAdmin
+      ? h('span', { class: 'dim', style: { fontSize: '12px' },
+          text: getLang() === 'uz' ? '🔒 Xodim qo‘shish faqat admin uchun' : '🔒 Добавление сотрудников только для администратора' })
+      : null,
     btn(t('export'), { icon: '⭳', onClick: () => api.download(catKey) })
   ));
 
@@ -510,7 +515,7 @@ export async function catalogPage(catKey, root) {
       columns: cols,
       rows: res.rows,
       rowCls: (r) => (r.is_active === 0 ? 'dim' : ''),
-      onRowClick: (r) => formEditor(catKey, spec, r),
+      onRowClick: catKey === 'employees' ? (r) => openEmployeeSalary(r.id) : (r) => formEditor(catKey, spec, r),
     }));
     foot.replaceChildren(
       h('span', { text: `${num(state.total)} ${t('total').toLowerCase()} · ${state.offset + 1}–${Math.min(state.offset + state.limit, state.total)}` }),
@@ -527,22 +532,48 @@ export async function catalogPage(catKey, root) {
   }
 
   // ------------------------------------------------ forma
+  /** Xodimlar katalogi — faqat admin yozishi mumkin */
+  function canWrite() {
+    return catKey === 'employees' ? auth.isAdmin : auth.can('catalogs.write');
+  }
+
   async function formEditor(key, spec2, row) {
-    const refs = refsCache;   // jonli obyekt — kaskadli ro'yxatlar yangilanishni ko‘radi
+    const refs = refsCache;   // jonli obyekt — kaskadli ro'yxatlar yangilanishni ko'radi
     const form = buildForm(spec2.fields, row || {}, refs);
+    const isNewEmployee = key === 'employees' && !row;
+
+    // --- Xodim uchun: bir vaqtda foydalanuvchi akkaunti yaratish
+    const acc = isNewEmployee ? buildForm([
+      { name: 'login', type: 'text', label: { uz: 'Login', ru: 'Логин' } },
+      { name: 'password', type: 'text', label: { uz: 'Parol', ru: 'Пароль' } },
+      { name: 'role', type: 'select', label: { uz: 'Rol', ru: 'Роль' }, options: [
+        { value: 'CASHIER', label: { uz: 'Kassir', ru: 'Кассир' } },
+        { value: 'WAREHOUSE_MANAGER', label: { uz: 'Ombor mudiri', ru: 'Управляющий складом' } },
+        { value: 'OBSERVER', label: { uz: 'Kuzatuvchi', ru: 'Наблюдатель' } },
+      ] },
+    ], { role: 'CASHIER' }, refs) : null;
+
     const m = modal({
       title: (row ? t('edit') : t('add')) + ' · ' + tl(spec2.label),
       width: 860,
       body: h('div', {},
         row && row.id ? infoHint(row) : null,
-        form.form
+        form.form,
+        acc ? h('div', {},
+          h('div', { class: 'form-section-title', style: { marginTop: '18px', paddingTop: '14px', borderTop: '1px solid var(--line)' },
+            text: (getLang() === 'uz' ? '🔑 Foydalanuvchi akkaunti (ixtiyoriy)' : '🔑 Учётная запись (необязательно)') }),
+          h('div', { class: 'hint', style: { marginBottom: '8px' },
+            text: getLang() === 'uz'
+              ? 'Login va parol to‘ldirilsa, xodim uchun avtomatik akkaunt yaratiladi va kirish huquqi beriladi.'
+              : 'Если заполнить логин и пароль, для сотрудника будет создана учётная запись с правом входа.' }),
+          acc.form) : null
       ),
       actions: (close) => [
-        row && auth.can('catalogs.write')
+        row && canWrite()
           ? btn(t('delete'), { cls: 'btn-danger', onClick: () => { close(); del(key, row); } })
           : h('span', { style: { marginRight: 'auto' } }),
         btn(t('cancel'), { onClick: close }),
-        auth.can('catalogs.write')
+        canWrite()
           ? btn(t('save'), {
               cls: 'btn-primary', onClick: async () => {
                 if (!form.validate()) return;
@@ -561,9 +592,19 @@ export async function catalogPage(catKey, root) {
                     const up = await api.post('/api/plan/upload', { image: dataUrl });
                     payload.image_url = up.url;
                   }
+                  // Xodim + akkaunt (bir shaklda)
+                  if (acc) {
+                    const a = acc.collect();
+                    if (a.login && a.password) payload.user = { login: a.login, password: a.password, role: a.role };
+                  }
+                  let saved = null;
                   if (row) await api.put(`/api/catalogs/${key}/${row.id}`, payload);
-                  else await api.post(`/api/catalogs/${key}`, payload);
-                  toast(t('saved'));
+                  else saved = await api.post(`/api/catalogs/${key}`, payload);
+                  toast(saved?.created_user
+                    ? t('saved') + ' · ' + (getLang() === 'uz'
+                      ? `Login: ${saved.created_user.login}`
+                      : `Логин: ${saved.created_user.login}`)
+                    : t('saved'));
                   m.close();
                   await loadRefs();
                   if (refreshTree) refreshTree(); else load();

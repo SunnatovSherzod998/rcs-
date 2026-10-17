@@ -1,5 +1,5 @@
 /** Boshqaruv paneli / Панель управления */
-import { api, getWarehouseFilter } from '../api.js';
+import { api, auth, getWarehouseFilter } from '../api.js';
 import { t, getLang, fn } from '../i18n.js';
 import { h, card, kpi, dataTable, pageHead, btn, money, num, qtyFmt, fmtDate, statusBadge, tr, spinner } from '../ui.js';
 import { go } from '../app.js';
@@ -121,4 +121,148 @@ export async function dashboard(root) {
   }
 
   if (cols2.children.length > 0) root.append(cols2);
+
+  // ---------------- Kunlik sotuvlar (xodimlar bo'yicha, 30 kun)
+  root.append(dailySalesChart(d.sales_by_emp_day || []));
+
+  // ---------------- Xodimlar bo'yicha oylik sotuvlar (faqat admin)
+  if (auth.isAdmin && feat('xodimlar') && d.emp_sales?.length) {
+    const L = getLang() === 'uz';
+    root.append(card(t('m_salary') + ' · ' + (L ? 'joriy oy sotuvlari' : 'продажи за текущий месяц'),
+      dataTable({
+        maxHeight: 320,
+        columns: [
+          {
+            key: 'name', title: t('salary_employee'),
+            render: (r) => h('span', {},
+              h('b', { text: fn(r, 'name_uz', 'name_ru') }),
+              r.position ? h('span', { class: 'dim', text: ' · ' + r.position }) : null),
+          },
+          { key: 'doc_count', title: t('doc_number'), align: 'right', render: (r) => num(r.doc_count) },
+          { key: 'sales_limit', title: t('salary_limit'), align: 'right',
+            render: (r) => (r.sales_limit > 0 ? money(r.sales_limit) : (L ? 'Cheksiz' : 'Нет')) },
+          { key: 'month_sales', title: t('salary_month_sales'), align: 'right',
+            render: (r) => h('b', { text: money(r.month_sales) }) },
+          {
+            key: 'progress', title: t('salary_over'), align: 'right',
+            render: (r) => {
+              if (!r.sales_limit || r.sales_limit <= 0) return '—';
+              const pct = Math.round((r.month_sales / r.sales_limit) * 100);
+              const over = r.month_sales > r.sales_limit;
+              return h('span', { class: over ? 'neg' : 'dim' },
+                pct + '%' + (over ? ' (+' + money(r.month_sales - r.sales_limit) + ')' : ''));
+            },
+          },
+          {
+            key: 'bonus', title: t('salary_bonus_pct'), align: 'right',
+            render: (r) => {
+              if (!r.sales_limit || r.sales_limit <= 0) return r.bonus_percent + '%';
+              const over = Math.max(0, r.month_sales - r.sales_limit);
+              const bonus = Math.round(over * (r.bonus_percent || 0));
+              return bonus > 0 ? h('b', { class: 'pos', text: '+' + money(bonus) }) : '—';
+            },
+          },
+        ],
+        rows: d.emp_sales,
+        onRowClick: () => go('cat/employees'),
+      })
+    ));
+  }
+}
+
+/** Xodim ranglari — barqaror (id bo'yicha) */
+const EMP_COLORS = ['#2f7ed8', '#e8833a', '#3aa76d', '#c0504d', '#8064a2', '#d4a017', '#17a2b8', '#e0609a', '#6b7f3a', '#7a5ea8'];
+
+/** Kunlik sotuvlar diagrammasi — har bir kun ustida xodimlar kesimi */
+function dailySalesChart(rows) {
+  const L = getLang() === 'uz';
+
+  // kunlar ro'yxati (bugundan 89 kun orqaga)
+  const days = [];
+  for (let i = 89; i >= 0; i--) {
+    const dt = new Date();
+    dt.setDate(dt.getDate() - i);
+    days.push(dt.toISOString().slice(0, 10));
+  }
+  const dayIdx = Object.fromEntries(days.map((d, i) => [d, i]));
+
+  // xodimlar ro'yxati (sotuv bo'lganlari)
+  const empMap = new Map();
+  const byDay = new Map();
+  for (const r of rows) {
+    if (!dayIdx[r.date]) continue;
+    if (!empMap.has(r.employee_id)) {
+      empMap.set(r.employee_id, {
+        id: r.employee_id, name: fn(r, 'name_uz', 'name_ru'),
+        color: EMP_COLORS[empMap.size % EMP_COLORS.length],
+      });
+    }
+    if (!byDay.has(r.date)) byDay.set(r.date, []);
+    byDay.get(r.date).push(r);
+  }
+  const emps = [...empMap.values()];
+  if (!emps.length) {
+    return card(t('m_sales') + ' · ' + (L ? 'kunlik sotuvlar (30 kun)' : 'продажи по дням (30 дней)'),
+      h('div', { class: 'alert alert-info', text: t('no_data') }));
+  }
+
+  const maxQty = Math.max(1, ...days.map((d) =>
+    (byDay.get(d) || []).reduce((s, r) => s + (Number(r.qty) || 0), 0)));
+
+  const chart = h('div', { class: 'sales-chart' });
+  const axis = h('div', { class: 'sc-axis' });
+  const tip = h('div', { class: 'sc-tip', style: { display: 'none' } });
+
+  for (const d of days) {
+    const list = (byDay.get(d) || []).slice()
+      .sort((a, b) => (Number(b.qty) || 0) - (Number(a.qty) || 0));
+    const total = list.reduce((s, r) => s + (Number(r.qty) || 0), 0);
+    const stack = h('div', { class: 'sc-stack' });
+
+    for (const r of list) {
+      const q = Number(r.qty) || 0;
+      if (q <= 0) continue;
+      const col = (empMap.get(r.employee_id) || {}).color || '#999';
+      stack.append(h('div', {
+        class: 'sc-seg',
+        style: { height: (q / maxQty * 100) + '%', background: col },
+      }));
+    }
+
+    const day = h('div', {
+      class: 'sc-day',
+      title: d + (total ? ' · ' + qtyFmt(total) + ' ' + (L ? 'dona' : 'шт') : ''),
+      onmouseenter: (e) => {
+        const rows2 = (byDay.get(d) || []).slice().sort((a, b) => (Number(b.qty) || 0) - (Number(a.qty) || 0));
+        const html = '<b>' + d + '</b><br>' + (rows2.length
+          ? rows2.map((r) => {
+              const c = (empMap.get(r.employee_id) || {}).color || '#999';
+              return `<span style="color:${c}">■</span> ${fn(r, 'name_uz', 'name_ru')}: `
+                + qtyFmt(r.qty) + ' ' + (L ? 'dona' : 'шт')
+                + ' · ' + money(r.amount) + ' UZS'
+                + (r.docs > 1 ? ` (${r.docs} ${L ? 'hujjat' : 'док.'})` : '');
+            }).join('<br>')
+          : (L ? 'sotuv yo‘q' : 'нет продаж'));
+        tip.innerHTML = html;
+        tip.style.display = 'block';
+        const r2 = e.currentTarget.getBoundingClientRect();
+        tip.style.left = (r2.left + r2.width / 2 - tip.offsetWidth / 2) + 'px';
+        tip.style.top = (r2.top - tip.offsetHeight - 8) + 'px';
+      },
+      onmouseleave: () => { tip.style.display = 'none'; },
+    }, total ? stack : h('div', { class: 'sc-seg', style: { height: '2px', background: 'var(--line)' } }));
+
+    chart.append(day);
+    axis.append(h('span', {
+      text: days.length && (dayIdx[d] % 10 === 0 || dayIdx[d] === days.length - 1)
+        ? d.slice(8) : '',
+    }));
+  }
+
+  return card(t('m_sales') + ' · ' + (L ? 'kunlik sotuvlar (30 kun)' : 'продажи по дням (30 дней)'),
+    h('div', {}, chart, axis,
+      h('div', { class: 'legend', style: { marginTop: '10px' } },
+        ...emps.map((e) => h('span', {},
+          h('i', { style: { background: e.color } }), e.name)))),
+    tip);
 }

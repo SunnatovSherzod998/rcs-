@@ -88,13 +88,22 @@ const server = http.createServer(async (req, res) => {
     if (route.auth && !session) {
       return sendJson(res, 401, { ok: false, error: { message: 'Tizimga kiring / Требуется вход', code: 'UNAUTHORIZED' } });
     }
-    if (route.roles && (!session || !route.roles.includes(session.role))) {
-      return sendJson(res, 403, { ok: false, error: { message: 'Bu amal uchun huquqingiz yo‘q / Недостаточно прав' } });
-    }
-
     const user = session
-      ? db.get('SELECT id, login, full_name, role, warehouse_id, allowed_features FROM users WHERE id=?', session.userId)
+      ? (() => {
+        const u = db.get('SELECT id, login, full_name, role, warehouse_id, employee_id, allowed_features FROM users WHERE id=?', session.userId);
+        if (u) u._perms = system.permsOf(u);   // rol + lavozim huquqlari
+        return u;
+      })()
       : null;
+
+    // Rol tekshiruvi: role mos kelsa yoki lavozim "*" huquqini bersa
+    if (route.roles) {
+      const byRole = session && route.roles.includes(session.role);
+      const byPosition = user && user._perms && user._perms.includes('*');
+      if (!byRole && !byPosition) {
+        return sendJson(res, 403, { ok: false, error: { message: 'Bu amal uchun huquqingiz yo‘q / Недостаточно прав' } });
+      }
+    }
 
     const body = ['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method) ? await readBody(req) : {};
     const query = Object.fromEntries(url.searchParams.entries());

@@ -155,7 +155,33 @@ export const STR = {
   d_debt:          ['Kontragentlar qarzi', 'Долги контрагентов'],
   d_chart:         ['Kirim / Chiqim', 'Приход / Расход'],
   d_movements30:   ['Oxirgi 30 kun', 'Последние 30 дней'],
-  d_no_alerts:     ['Ogohlantirish yo‘q. Ajoyib!', 'Предупреждений нет. Отлично!'],
+  d_no_alerts:     ["Ogohlantirish yo'q. Ajoyib!", 'Предупреждений нет. Отлично!'],
+
+  // ---------------- ishchilar oyligi
+  m_salary:        ['Ishchilar oyligi', 'Зарплаты сотрудников'],
+  salary_employee: ['Xodim', 'Сотрудник'],
+  salary_position: ['Lavozim', 'Должность'],
+  salary_base:     ['Oylik (so\'m)', 'Оклад (сум)'],
+  salary_limit:    ['Sotuv limiti', 'Лимит продаж'],
+  salary_bonus_pct:['Bonus foizi (%)', 'Процент бонуса (%)'],
+  salary_month_sales:['Oylik sotuv', 'Продажи за месяц'],
+  salary_over:     ['Limitdan oshgan', 'Сверх лимита'],
+  salary_pending_bonus:['Kutilayotgan bonus', 'Ожидаемый бонус'],
+  salary_paid_bonus:['Berilgan bonus', 'Выплаченный бонус'],
+  salary_total:    ['Jami oylik', 'Итого зарплата'],
+  salary_history:  ['Bonus tarixi', 'История бонусов'],
+  salary_sale_amount:['Sotuv summasi', 'Сумма продажи'],
+  salary_over_limit:['Limitdan oshgan', 'Сверх лимита'],
+  salary_bonus_amount:['Bonus summasi', 'Сумма бонуса'],
+  salary_doc:      ['Hujjat', 'Документ'],
+  salary_month:    ['Oy', 'Месяц'],
+  salary_save:    ['Saqlash', 'Сохранить'],
+  salary_no_limit: ['Cheksiz', 'Без лимита'],
+
+  // ---------------- mening statistikam
+  my_stats:          ['Mening statistikam', 'Моя статистика'],
+  no_employee_link:  ['Sizga xodim biriktirilmagan',
+                      'Вы не привязаны к сотруднику'],
 };
 
 let lang = localStorage.getItem('ombor_lang') || 'uz';

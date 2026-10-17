@@ -185,13 +185,6 @@ export const FEATURES = [
 
   { group: uz('Registrlar', 'Регистры'), groupId: 'registers' },
   {
-    key: 'xarita2d',
-    groupId: 'registers',
-    icon: '▩',
-    label: uz('2D ombor xaritasi', '2D карта склада'),
-    desc: uz('Ombordagi tovarlar joylashuvining vizual interaktiv xaritasi', 'Интерактивная визуальная карта ячеек и товаров'),
-  },
-  {
     key: 'qoldiqlar',
     groupId: 'registers',
     icon: '▦',

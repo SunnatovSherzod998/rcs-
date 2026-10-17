@@ -5,7 +5,8 @@
  * Frontend shakllarni shu deskriptorlardan avtomatik chizadi.
  */
 const { all, get, run, buildWhere, tx } = require('../db');
-const { bad, notFound } = require('../lib/http');
+const { bad, notFound, forbidden } = require('../lib/http');
+const { hashPassword } = require('../lib/crypto');
 
 /** maydon turi: text | textarea | number | money | int | bool | select | date | ref */
 const ROOM_KIND_OPTIONS = [
@@ -16,6 +17,73 @@ const ROOM_KIND_OPTIONS = [
   { value: 'QUARANTINE', label: { uz: 'Karantin', ru: 'Карантин' } },
   { value: 'BUFFER', label: { uz: 'Zaxira', ru: 'Буфер' } },
 ];
+
+/**
+ * Xodim lavozimlari va ularga avtomatik beriladigan huquqlar.
+ * position maydoni qiymati orqali foydalanuvchi ruxsatlari kengaytiriladi.
+ */
+const POSITION_PERMS = {
+  // --- Sotish / Продажи
+  CASHIER:               ['pos.use'],
+  'КАССИР':              ['pos.use'],
+  'KASSIR':              ['pos.use'],
+  'ОПЕРАЦИЯНИК КАССЫ':   ['pos.use'],
+  SELLER:                ['pos.use'],
+  'SOTUVCHI':            ['pos.use'],
+  'ПРОДАВЕЦ':            ['pos.use'],
+  'САВЕТЧИК ПО ПРОДАЖАМ': ['pos.use'],
+  'САВЕТЧИК ПО ПРОДАЖЕ': ['pos.use'],
+
+  // --- Ombor / Склад
+  WAREHOUSE:             ['locations.read', 'documents.write', 'documents.post'],
+  'OMBOR XODIMI':        ['locations.read', 'documents.write', 'documents.post'],
+  'ОПЕРАЦИЯНИК СКЛАДА':  ['locations.read', 'documents.write', 'documents.post'],
+  'КЛАДОВЩИК':           ['locations.read', 'documents.write', 'documents.post'],
+
+  // --- Xarid / Закупки
+  BUYER:                 ['catalogs.write'],
+  'XARIDOR':             ['catalogs.write'],
+  'ЗАКУПЩИК':            ['catalogs.write'],
+
+  // --- Buxgalteria / Бухгалтерия
+  ACCOUNTANT:            ['reports.read', 'export'],
+  'BUXGALTER':           ['reports.read', 'export'],
+  'БУХГАЛТЕР':           ['reports.read', 'export'],
+  'СЧЕТОВОД':            ['reports.read', 'export'],
+
+  // --- Boshqaruv / Управление
+  MANAGER:               ['catalogs.write', 'locations.read', 'documents.post', 'import'],
+  'OMBOR MUDIRI':        ['catalogs.write', 'locations.read', 'documents.post', 'import'],
+  'УПРАВЛЯЮЩИЙ':         ['catalogs.write', 'locations.read', 'documents.post', 'import'],
+  'МУДИР':               ['catalogs.write', 'locations.read', 'documents.post', 'import'],
+
+  DIRECTOR:              ['*'],
+  'RAHBAR':              ['*'],
+  'ДИРЕКТОР':            ['*'],
+};
+
+/** Lauvozim variantlari (forma uchun) */
+const POSITION_OPTIONS = [
+  { value: 'CASHIER',              label: { uz: 'Kassir',              ru: 'Кассир' } },
+  { value: 'SELLER',               label: { uz: 'Sotuvchi',            ru: 'Продавец' } },
+  { value: 'WAREHOUSE',            label: { uz: 'Ombor xodimi',        ru: 'Кладовщик' } },
+  { value: 'BUYER',                label: { uz: 'Xaridor (menskul)',   ru: 'Закупщик' } },
+  { value: 'ACCOUNTANT',           label: { uz: 'Buxgalter',           ru: 'Бухгалтер' } },
+  { value: 'MANAGER',              label: { uz: 'Ombor mudiri',        ru: 'Управляющий складом' } },
+  { value: 'DIRECTOR',             label: { uz: 'Rahbar',              ru: 'Директор' } },
+];
+
+/** Lauvozim nomi (har qanday yozuvda) bo'yicha huquqlar */
+function positionPerms(position) {
+  if (!position) return [];
+  const p = String(position).trim();
+  if (POSITION_PERMS[p]) return POSITION_PERMS[p];
+  const up = p.toUpperCase();
+  for (const [k, v] of Object.entries(POSITION_PERMS)) {
+    if (k.toUpperCase() === up) return v;
+  }
+  return [];
+}
 
 const CATALOGS = {
   currencies: {
@@ -226,9 +294,13 @@ const CATALOGS = {
       { name: 'code', type: 'text', label: { uz: 'Kod', ru: 'Табельный №' } },
       { name: 'name_uz', type: 'text', required: true, label: { uz: 'F.I.O. (UZ)', ru: 'Ф.И.О. (УЗ)' } },
       { name: 'name_ru', type: 'text', required: true, label: { uz: 'F.I.O. (RU)', ru: 'Ф.И.О. (RU)' } },
-      { name: 'position', type: 'text', label: { uz: 'Lavozim', ru: 'Должность' } },
+      { name: 'position', type: 'select', label: { uz: 'Lavozim', ru: 'Должность' },
+        options: POSITION_OPTIONS },
       { name: 'phone', type: 'text', label: { uz: 'Telefon', ru: 'Телефон' } },
       { name: 'warehouse_id', type: 'ref', ref: 'warehouses', label: { uz: 'Ombor', ru: 'Склад' } },
+      { name: 'base_salary', type: 'money', label: { uz: 'Oylik (so\'m)', ru: 'Оклад (сум)' } },
+      { name: 'sales_limit', type: 'money', label: { uz: 'Sotuv limiti', ru: 'Лимит продаж' } },
+      { name: 'bonus_percent', type: 'number', step: '0.1', label: { uz: 'Bonus foizi (%)', ru: 'Процент бонуса (%)' } },
       { name: 'is_active', type: 'bool', label: { uz: 'Faol', ru: 'Активен' } },
     ],
   },
@@ -302,6 +374,28 @@ function pick(cat, body, opt = {}) {
   return out;
 }
 
+/**
+ * Xodim qo'shilsa — bir vaqtning o'zida foydalanuvchi akkaunti ham yaratiladi.
+ * body.user = { login, password, role, warehouse_id }
+ */
+function createEmployeeUser(empId, userData) {
+  const login = String(userData.login || '').trim();
+  const password = String(userData.password || '').trim();
+  if (!login || !password) return null;              // akkaunt yaratilmadi
+
+  if (get('SELECT id FROM users WHERE lower(login)=lower(?)', login)) {
+    throw bad(`Login "${login}" band / Логин "${login}" уже занят`);
+  }
+  const { hash, salt } = hashPassword(password);
+  run(
+    `INSERT INTO users (login, password_hash, salt, full_name, role, warehouse_id, employee_id, is_active)
+     VALUES (?,?,?,?,?,?,?,1)`,
+    login, hash, salt, userData.full_name || login,
+    userData.role || 'CASHIER', userData.warehouse_id || null, empId
+  );
+  return get('SELECT id, login, role FROM users WHERE lower(login)=lower(?)', login);
+}
+
 function create(cat, body) {
   const c = getCatalog(cat);
   const data = pick(cat, body);
@@ -312,7 +406,18 @@ function create(cat, body) {
     `INSERT INTO ${c.table} (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`,
     ...cols.map((k) => data[k])
   );
-  return get(`SELECT * FROM ${c.table} WHERE id=?`, Number(res.lastInsertRowid));
+  const id = Number(res.lastInsertRowid);
+  const row = get(`SELECT * FROM ${c.table} WHERE id=?`, id);
+
+  // Xodim + foydalanuvchi akkaunti (bir shaklda)
+  if (cat === 'employees' && body.user) {
+    row.created_user = createEmployeeUser(id, {
+      ...body.user,
+      full_name: data.name_uz || data.name_ru,
+      warehouse_id: body.user.warehouse_id || data.warehouse_id,
+    });
+  }
+  return row;
 }
 
 function update(cat, id, body) {
@@ -379,9 +484,33 @@ function register(router) {
     if (!row) throw notFound();
     return row;
   });
-  router.post('/api/catalogs/:cat', (ctx) => create(ctx.params.cat, ctx.body));
-  router.put('/api/catalogs/:cat/:id', (ctx) => update(ctx.params.cat, Number(ctx.params.id), ctx.body));
-  router.del('/api/catalogs/:cat/:id', (ctx) => remove(ctx.params.cat, Number(ctx.params.id)));
+  /** Katalog yozish huquqlari: employees -> faqat ADMIN, qolganlari -> catalogs.write */
+  function requireWrite(ctx, cat) {
+    if (cat === 'employees') {
+      if (ctx.user?.role !== 'ADMIN') {
+        throw forbidden('Xodim qo‘shish/tahrirlash faqat administratorga ochiq / '
+          + 'Добавление и изменение сотрудников доступно только администратору');
+      }
+      return;
+    }
+    const perms = ctx.user?._perms || [];
+    if (!(perms.includes('*') || perms.includes('catalogs.write'))) {
+      throw forbidden('Bu amal uchun huquqingiz yo‘q / Недостаточно прав');
+    }
+  }
+
+  router.post('/api/catalogs/:cat', (ctx) => {
+    requireWrite(ctx, ctx.params.cat);
+    return create(ctx.params.cat, ctx.body);
+  });
+  router.put('/api/catalogs/:cat/:id', (ctx) => {
+    requireWrite(ctx, ctx.params.cat);
+    return update(ctx.params.cat, Number(ctx.params.id), ctx.body);
+  });
+  router.del('/api/catalogs/:cat/:id', (ctx) => {
+    requireWrite(ctx, ctx.params.cat);
+    return remove(ctx.params.cat, Number(ctx.params.id));
+  });
 }
 
-module.exports = { register, CATALOGS, list, getCatalog, options };
+module.exports = { register, CATALOGS, list, getCatalog, options, positionPerms, POSITION_OPTIONS };

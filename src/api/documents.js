@@ -100,11 +100,11 @@ function register(router) {
   // O'chirish
   router.del('/api/documents/:id', (ctx) => stock.deleteDocument(Number(ctx.params.id)));
 
-  // Провести
+  // Провести (kassir ham o'tkazishi mumkin — POS savdo uchun)
   router.post('/api/documents/:id/post', (ctx) => {
     const r = stock.post(Number(ctx.params.id), ctx.user);
     return { ...r, document: stock.getDocument(Number(ctx.params.id)) };
-  }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER'] });
+  }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'CASHIER'] });
 
   // Отменить проведение
   router.post('/api/documents/:id/unpost', (ctx) => {

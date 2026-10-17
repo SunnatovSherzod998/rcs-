@@ -59,6 +59,11 @@ const COLUMN_MIGRATIONS = [
   ['document_lines', 'discount', 'REAL DEFAULT 0'],
   ['document_lines', 'dest_location_id', 'INTEGER'],
   ['users', 'allowed_features', 'TEXT'],
+  ['catalog_employees', 'base_salary', 'REAL NOT NULL DEFAULT 0'],
+  ['catalog_employees', 'sales_limit', 'REAL NOT NULL DEFAULT 0'],
+  ['catalog_employees', 'bonus_percent', 'REAL NOT NULL DEFAULT 0'],
+  ['catalog_employees', 'bonus_total', 'REAL NOT NULL DEFAULT 0'],
+  ['users', 'employee_id', 'INTEGER'],
 ];
 
 function migrateColumns() {
