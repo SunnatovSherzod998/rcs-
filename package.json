@@ -10,6 +10,7 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
+    "build":"npm install",
     "reset": "node scripts/reset-db.js --yes",
     "backup": "node scripts/backup.js",
     "seed": "node scripts/seed-demo.js",
