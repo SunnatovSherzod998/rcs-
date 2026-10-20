@@ -333,6 +333,14 @@ window.addEventListener('hashchange', () => { if (auth.isAuthed()) render(); });
 // Login parol maydonida ko'rsatish / yashirish tugmasi
 attachPasswordToggle($('lgPass'));
 
+// Login maydonlari har doim bo'sh bo'lsin (brauzer autofill'ini ham tozalaymiz)
+function clearLoginFields() {
+  $('lgLogin').value = '';
+  $('lgPass').value = '';
+}
+clearLoginFields();
+window.addEventListener('load', clearLoginFields);
+
 $('loginForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const btnEl = $('btnLogin');
@@ -340,6 +348,7 @@ $('loginForm').addEventListener('submit', async (e) => {
   $('loginErr').replaceChildren();
   try {
     await api.login($('lgLogin').value.trim(), $('lgPass').value);
+    clearLoginFields();
     location.hash = 'dashboard';
     await showApp();
   } catch (err) {
@@ -352,6 +361,7 @@ $('loginForm').addEventListener('submit', async (e) => {
 $('logoutBtn').addEventListener('click', async () => {
   await api.logout();
   clearFeatures();
+  clearLoginFields();
   showLogin();
 });
 
@@ -360,7 +370,7 @@ $('langBtn').addEventListener('click', () => {
   applyLang();
   buildMenu();
   if (auth.isAuthed()) { loadWhFilter(); render(); }
-  else { $('loginHint').textContent = getLang() === 'uz' ? 'admin / admin  ·  O‘zbekcha / Русский' : 'admin / admin  ·  Русский / O‘zbekcha'; }
+  else { $('loginHint').textContent = getLang() === 'uz' ? 'O‘zbekcha / Русский' : 'Русский / O‘zbekcha'; }
 });
 
 // F5 / klaviatura shortcut

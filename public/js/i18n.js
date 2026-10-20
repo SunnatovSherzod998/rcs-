@@ -12,7 +12,7 @@ export const STR = {
   password:        ['Parol', 'Пароль'],
   show_password:   ['Parolni ko‘rsatish', 'Показать пароль'],
   hide_password:   ['Parolni yashirish', 'Скрыть пароль'],
-  login_hint:      ['admin / admin', 'admin / admin'],
+  login_hint:      ['', ''],
   sign_in:         ['Tizimga kiritish', 'Войти'],
   loading:         ['Yuklanmoqda…', 'Загрузка…'],
   save:            ['Saqlash', 'Сохранить'],
