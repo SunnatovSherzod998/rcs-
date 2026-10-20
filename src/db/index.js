@@ -1,36 +1,92 @@
 'use strict';
 /**
- * Ma'lumotlar bazasi qatlami.
- * Ishlatiladi: node:sqlite (Node.js 22.5+), tashqi paket talab qilinmaydi.
+ * Ma'lumotlar bazasi qatlami — dual-driver.
+ *
+ *   • LOKAL  : node:sqlite (DatabaseSync) — faylda, tez, sinxron
+ *   • BULUT  : @libsql/client (Turso)      — HTTP orqali, async
+ *
+ * Barcha funksiyalar ASYNC qaytaradi (`await db.all(...)`).
+ * node:sqlite sinxron bo'lsa ham, async funksiya ichida to'g'ri ishlaydi.
+ *
+ * Tanlov: TURSO_DATABASE_URL mavjud bo'lsa bulut, aks holda lokal fayl.
  */
 const fs = require('node:fs');
 const path = require('node:path');
 const { hashPassword } = require('../lib/crypto');
 
-let DatabaseSync;
-try {
-  ({ DatabaseSync } = require('node:sqlite'));
-} catch (e) {
-  console.error('\n[ERROR] node:sqlite topilmadi. Node.js 22.5+ kerak (LTS 24 tavsiya etiladi).');
-  console.error('         "node --version" bilan versiyani tekshiring.\n');
-  throw e;
-}
-
-const DATA_DIR = process.env.OMBOR_DATA_DIR || path.join(__dirname, '..', '..', 'data');
+const DATA_DIR = process.env.OMBOR_DATA_DIR
+  || (process.env.VERCEL ? '/tmp/ombor' : path.join(__dirname, '..', '..', 'data'));
 const DB_FILE = process.env.OMBOR_DB || path.join(DATA_DIR, 'ombor.db');
 const SCHEMA_FILE = path.join(__dirname, 'schema.sql');
 
-fs.mkdirSync(DATA_DIR, { recursive: true });
+const TURSO_URL = process.env.TURSO_DATABASE_URL || process.env.OMBOR_DB_URL || '';
+const TURSO_TOKEN = process.env.TURSO_AUTH_TOKEN || process.env.OMBOR_DB_TOKEN || '';
+const REMOTE = Boolean(TURSO_URL);
 
-const db = new DatabaseSync(DB_FILE);
-db.exec('PRAGMA foreign_keys = ON;');
-db.exec('PRAGMA journal_mode = WAL;');
-db.exec('PRAGMA busy_timeout = 5000;');
+// Serverless muhitda fayl yo'yligi (odatda /tmp) — lokal sinxron driver uchun
+fs.mkdirSync(path.dirname(DB_FILE), { recursive: true });
+
+/** Faol driver: { exec, all, run } — barchasi async */
+let drv = null;
+
+function initDriver() {
+  if (drv) return drv;
+
+  if (REMOTE) {
+    // --- Bulut: Turso / libSQL
+    const { createClient } = require('@libsql/client');
+    const client = createClient({ url: TURSO_URL, authToken: TURSO_TOKEN });
+    drv = {
+      remote: true,
+      exec: async (sql) => { await client.executeMultiple(sql); },
+      all: async (sql, p) => {
+        const r = await client.execute({ sql, args: p });
+        return r.rows;
+      },
+      run: async (sql, p) => {
+        const r = await client.execute({ sql, args: p });
+        return { lastInsertRowid: r.lastInsertRowid, changes: r.rowsAffected };
+      },
+      close: () => { /* turso: alohida ulanish yo'q */ },
+    };
+  } else {
+    // --- Lokal: node:sqlite (Node.js 22.5+)
+    let DatabaseSync;
+    try {
+      ({ DatabaseSync } = require('node:sqlite'));
+    } catch (e) {
+      console.error('\n[ERROR] node:sqlite topilmadi. Node.js 22.5+ kerak (LTS 24 tavsiya etiladi).');
+      throw e;
+    }
+    const d = new DatabaseSync(DB_FILE);
+    drv = {
+      remote: false,
+      exec: async (sql) => { d.exec(sql); },
+      all: async (sql, p) => d.prepare(sql).all(...p),
+      run: async (sql, p) => {
+        const r = d.prepare(sql).run(...p);
+        return { lastInsertRowid: r.lastInsertRowid, changes: r.changes };
+      },
+      close: () => { try { d.close(); } catch { /* noop */ } },
+    };
+  }
+  return drv;
+}
+
+// ------------------------------------------------------------------ schema
+
+const STATEMENT_CACHE = new Map();
+
+/** PRAGMA va boshqa "multiple statements" — faqat init da ishlatiladi */
+async function execRaw(sql) {
+  const d = initDriver();
+  await d.exec(sql);
+}
 
 /** Jadvalni yaratadi (idempotent) */
-function migrate() {
-  db.exec(fs.readFileSync(SCHEMA_FILE, 'utf8'));
-  migrateColumns();
+async function migrate() {
+  await execRaw(fs.readFileSync(SCHEMA_FILE, 'utf8'));
+  await migrateColumns();
 }
 
 /**
@@ -66,47 +122,62 @@ const COLUMN_MIGRATIONS = [
   ['users', 'employee_id', 'INTEGER'],
 ];
 
-function migrateColumns() {
+async function migrateColumns() {
   for (const [table, column, type] of COLUMN_MIGRATIONS) {
-    const cols = all(`PRAGMA table_info(${table})`);
+    const cols = await all(`PRAGMA table_info(${table})`);
     if (!cols.length) continue;                       // jadval yo'q
     if (cols.some((c) => c.name === column)) continue;
-    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+    await execRaw(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
   }
   // yangi ustunlarga bog'liq indekslar (faqat mavjudlik tekshiriladi)
   for (const sql of [
     'CREATE INDEX IF NOT EXISTS ix_loc_map ON catalog_locations(warehouse_id, zone, row_no, level_no, pos)',
-    'CREATE INDEX IF NOT EXISTS ix_loc_room ON catalog_locations(room_id, rack_id, level_no, pos)',
+    'CREATE INDEX IF NOT EXISTS ix_loc_room ON catalog_locations(warehouse_id, room_id, rack_id, level_no, pos)',
     'CREATE INDEX IF NOT EXISTS ix_rooms_wh ON catalog_rooms(warehouse_id, floor, pos_y, pos_x)',
   ]) {
-    try { db.exec(sql); } catch { /* eski bazada ustun yo'q */ }
+    try { await execRaw(sql); } catch { /* eski bazada ustun yo'q */ }
   }
 }
 
-/** Tranzaksiya ichida ishlovchilar */
-function tx(fn) {
-  db.exec('BEGIN IMMEDIATE');
+// ------------------------------------------------------------------ tranzaksiya
+
+/**
+ * Tranzaksiya. Turso HTTP orqali ishlaydi va `tx()` ichida async ishlashni
+ * qo'llamaydi (chunki connection session bog'liq) — shuning uchun bulutda
+ * tranzaksiya "yumshoq" rejimda ishlaydi (BEGIN/COMMIT bayroqlari yuboriladi).
+ */
+async function tx(fn) {
+  const d = initDriver();
+  if (d.remote) {
+    await execRaw('BEGIN');
+    try {
+      const r = await fn();
+      await execRaw('COMMIT');
+      return r;
+    } catch (err) {
+      try { await execRaw('ROLLBACK'); } catch { /* noop */ }
+      throw err;
+    }
+  }
+  await execRaw('BEGIN IMMEDIATE');
   try {
-    const result = fn();
-    db.exec('COMMIT');
-    return result;
+    const r = await fn();
+    await execRaw('COMMIT');
+    return r;
   } catch (err) {
-    try { db.exec('ROLLBACK'); } catch { /* ignore */ }
+    try { await execRaw('ROLLBACK'); } catch { /* noop */ }
     throw err;
   }
 }
 
-// ---------------------------------------------------------------- helpers
+// ------------------------------------------------------------------ helpers
 
-const stmtCache = new Map();
-function prep(sql) {
-  let s = stmtCache.get(sql);
-  if (!s) { s = db.prepare(sql); stmtCache.set(sql, s); }
-  return s;
-}
-const all = (sql, ...p) => prep(sql).all(...p);
-const get = (sql, ...p) => prep(sql).get(...p);
-const run = (sql, ...p) => prep(sql).run(...p);
+const all = async (sql, ...p) => initDriver().all(sql, p);
+const get = async (sql, ...p) => {
+  const rows = await initDriver().all(sql, p);
+  return rows[0];
+};
+const run = async (sql, ...p) => initDriver().run(sql, p);
 
 /** Dinamik WHERE qurish (faqat ishonchli maydon nomlari) */
 function buildWhere(filters = {}, allowed = []) {
@@ -133,14 +204,28 @@ function buildWhere(filters = {}, allowed = []) {
   return { clause: parts.length ? 'WHERE ' + parts.join(' AND ') : '', params };
 }
 
-function nextNumber(name) {
-  run('INSERT INTO counters(name, value) VALUES (?, 0) ON CONFLICT(name) DO NOTHING', name);
-  run('UPDATE counters SET value = value + 1 WHERE name = ?', name);
-  return get('SELECT value FROM counters WHERE name = ?', name).value;
+const NEXT_LOCK = { v: 0 };
+
+async function nextNumber(name) {
+  const d = initDriver();
+  // Noldan tiklaymiz — upsert bilan
+  await run('INSERT INTO counters(name, value) VALUES (?, 0) ON CONFLICT(name) DO NOTHING', name);
+  if (d.remote) {
+    // Turso: atomic increment
+    const r = await run(
+      `INSERT INTO counters(name, value) VALUES (?, 1)
+       ON CONFLICT(name) DO UPDATE SET value = value + 1
+       RETURNING value`, name);
+    const rows = await all('SELECT value FROM counters WHERE name = ?', name);
+    return rows[0].value;
+  }
+  await run('UPDATE counters SET value = value + 1 WHERE name = ?', name);
+  const row = await get('SELECT value FROM counters WHERE name = ?', name);
+  return row.value;
 }
 
-function audit(user, action, entity, entityId, details) {
-  run(
+async function audit(user, action, entity, entityId, details) {
+  await run(
     `INSERT INTO audit_log (user_id, user_login, action, entity, entity_id, details)
      VALUES (?,?,?,?,?,?)`,
     user?.id ?? null, user?.login ?? 'system', action,
@@ -148,28 +233,28 @@ function audit(user, action, entity, entityId, details) {
   );
 }
 
-function getSetting(key, fallback = null) {
-  const row = get('SELECT value FROM settings WHERE key = ?', key);
+async function getSetting(key, fallback = null) {
+  const row = await get('SELECT value FROM settings WHERE key = ?', key);
   return row ? row.value : fallback;
 }
 
-function setSetting(key, value) {
-  run(
+async function setSetting(key, value) {
+  await run(
     'INSERT INTO settings(key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
     key, String(value)
   );
 }
 
-// ---------------------------------------------------------------- seed
+// ------------------------------------------------------------------ seed
 
-function seed() {
-  const has = (t) => {
-    const r = get(`SELECT COUNT(*) AS c FROM ${t}`);
+async function seed() {
+  const has = async (t) => {
+    const r = await get(`SELECT COUNT(*) AS c FROM ${t}`);
     return r.c > 0;
   };
 
   // Валюты
-  if (!has('catalog_currencies')) {
+  if (!await has('catalog_currencies')) {
     const cur = [
       ['UZS', 'O‘zbek so‘mi', 'Узбекский сум', 1, 1],
       ['USD', 'AQSH dollari', 'Доллар США', 12650, 0],
@@ -177,12 +262,12 @@ function seed() {
       ['RUB', 'Rossiya rubli', 'Российский рубль', 139, 0],
     ];
     for (const c of cur) {
-      run('INSERT INTO catalog_currencies (code, name_uz, name_ru, rate, is_base) VALUES (?,?,?,?,?)', ...c);
+      await run('INSERT INTO catalog_currencies (code, name_uz, name_ru, rate, is_base) VALUES (?,?,?,?,?)', ...c);
     }
   }
 
   // Единицы измерения
-  if (!has('catalog_units')) {
+  if (!await has('catalog_units')) {
     const units = [
       ['DONA', 'dona', 'штука', 1],
       ['KG', 'kilogramm', 'килограмм', 1],
@@ -194,48 +279,50 @@ function seed() {
       ['UP', 'dona (o‘ram)', 'штука (упаковка)', 1],
     ];
     for (const u of units) {
-      run('INSERT INTO catalog_units (code, name_uz, name_ru, base_unit_id, ratio) VALUES (?,?,?,NULL,?)', ...u);
+      await run('INSERT INTO catalog_units (code, name_uz, name_ru, base_unit_id, ratio) VALUES (?,?,?,NULL,?)', ...u);
     }
   }
 
   // Склады
-  if (!has('catalog_warehouses')) {
-    run(`INSERT INTO catalog_warehouses (code, name_uz, name_ru, kind, address, phone, is_negative_allowed)
+  if (!await has('catalog_warehouses')) {
+    await run(`INSERT INTO catalog_warehouses (code, name_uz, name_ru, kind, address, phone, is_negative_allowed)
          VALUES ('MAIN','Markaziy ombor','Центральный склад','STORE','Toshkent, Sergeli tumani','+998 71 000 00 00', 0)`);
-    run(`INSERT INTO catalog_warehouses (code, name_uz, name_ru, kind, address, phone, is_negative_allowed)
+    await run(`INSERT INTO catalog_warehouses (code, name_uz, name_ru, kind, address, phone, is_negative_allowed)
          VALUES ('FIL1','Filial 1','Филиал 1','BRANCH','Toshkent, Chilonzor','+998 71 111 11 11', 0)`);
-    run(`INSERT INTO catalog_locations (warehouse_id, code, name_uz, name_ru, kind)
+    await run(`INSERT INTO catalog_locations (warehouse_id, code, name_uz, name_ru, kind)
          SELECT id,'A-01','A zona 1','Зона A-1','ZONE' FROM catalog_warehouses WHERE code='MAIN'`);
-    run(`INSERT INTO catalog_locations (warehouse_id, code, name_uz, name_ru, kind)
+    await run(`INSERT INTO catalog_locations (warehouse_id, code, name_uz, name_ru, kind)
          SELECT id,'A-01-01','Stellaj 1','Стеллаж 1','RACK' FROM catalog_warehouses WHERE code='MAIN'`);
-    run(`INSERT INTO catalog_locations (warehouse_id, code, name_uz, name_ru, kind)
+    await run(`INSERT INTO catalog_locations (warehouse_id, code, name_uz, name_ru, kind)
          SELECT id,'A-01-02','Stellaj 2','Стеллаж 2','RACK' FROM catalog_warehouses WHERE code='MAIN'`);
   }
 
   // Пользователи
-  if (!has('users')) {
-    const wh = get(`SELECT id FROM catalog_warehouses WHERE code='MAIN'`);
-    const pass = 'admin';
+  if (!await has('users')) {
+    const wh = await get(`SELECT id FROM catalog_warehouses WHERE code='MAIN'`);
+    const pass = process.env.ADMIN_PASSWORD || 'admin';
     const { hash, salt } = hashPassword(pass);
-    run(`INSERT INTO users (login, password_hash, salt, full_name, role, warehouse_id)
+    await run(`INSERT INTO users (login, password_hash, salt, full_name, role, warehouse_id)
          VALUES (?,?,?,?,?,?)`, 'admin', hash, salt, 'Administrator', 'ADMIN', wh?.id ?? null);
   }
 
   // Настройки
-  if (getSetting('base_currency') === null) setSetting('base_currency', 'UZS');
-  if (getSetting('negative_stock_block') === null) setSetting('negative_stock_block', '1');
-  if (getSetting('default_language') === null) setSetting('default_language', 'uz');
-  if (getSetting('fiscal_prefix') === null) setSetting('fiscal_prefix', '00000');
+  if (await getSetting('base_currency') === null) await setSetting('base_currency', 'UZS');
+  if (await getSetting('negative_stock_block') === null) await setSetting('negative_stock_block', '1');
+  if (await getSetting('default_language') === null) await setSetting('default_language', 'uz');
+  if (await getSetting('fiscal_prefix') === null) await setSetting('fiscal_prefix', '00000');
 }
 
-function init() {
-  migrate();
-  seed();
-  return db;
+async function init() {
+  await migrate();
+  await seed();
+  return drv;
 }
 
 module.exports = {
-  db, init, tx, all, get, run, buildWhere, nextNumber, audit,
-  getSetting, setSetting,
-  DATA_DIR, DB_FILE,
+  init, tx, all, get, run, buildWhere, nextNumber, audit,
+  getSetting, setSetting, execRaw,
+  DATA_DIR, DB_FILE, SCHEMA_FILE,
+  isRemote: () => REMOTE,
+  close: () => { if (drv) drv.close(); },
 };

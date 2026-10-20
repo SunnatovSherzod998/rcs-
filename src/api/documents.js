@@ -25,9 +25,9 @@ const ISSUE_REASONS = {
   SAMPLE:   { uz: 'Namuna', ru: 'Образец' },
 };
 
-function register(router) {
+async function register(router) {
   // Ro'yxat + filtrlar
-  router.get('/api/documents', (ctx) => {
+  router.get('/api/documents',async (ctx) => {
     const q = ctx.query;
     const where = [];
     const params = [];
@@ -59,7 +59,7 @@ function register(router) {
     const offset = Number(q.offset) || 0;
     const order = ['number DESC', 'date DESC', 'id DESC'].includes(q.order) ? q.order : 'd.date DESC, d.number DESC, d.id DESC';
 
-    const rows = all(
+    const rows = await all(
       `SELECT d.*, w.name_ru AS warehouse_name_ru, w.name_uz AS warehouse_name_uz,
               w2.name_ru AS dest_name_ru, w2.name_uz AS dest_name_uz,
               cp.name_ru AS counterparty_name_ru, cp.name_uz AS counterparty_name_uz,
@@ -76,10 +76,10 @@ function register(router) {
          ${w} ORDER BY ${order} LIMIT ? OFFSET ?`,
       ...params, limit, offset
     );
-    const total = get(`SELECT COUNT(*) AS c FROM documents d
+    const total = (await get(`SELECT COUNT(*) AS c FROM documents d
         LEFT JOIN catalog_warehouses w ON w.id=d.warehouse_id
-        LEFT JOIN catalog_counterparties cp ON cp.id=d.counterparty_id ${w}`, ...params).c;
-    const sums = get(`SELECT COALESCE(SUM(d.total_amount),0) AS amount, COALESCE(SUM(d.total_qty),0) AS qty
+        LEFT JOIN catalog_counterparties cp ON cp.id=d.counterparty_id ${w}`, ...params)).c;
+    const sums = await get(`SELECT COALESCE(SUM(d.total_amount),0) AS amount, COALESCE(SUM(d.total_qty),0) AS qty
                         FROM documents d
                         LEFT JOIN catalog_warehouses w ON w.id=d.warehouse_id
                         LEFT JOIN catalog_counterparties cp ON cp.id=d.counterparty_id ${w}`, ...params);
@@ -87,39 +87,39 @@ function register(router) {
   });
 
   // Bitta hujjat
-  router.get('/api/documents/:id', (ctx) => {
-    const doc = stock.getDocument(Number(ctx.params.id));
+  router.get('/api/documents/:id', async (ctx) => {
+    const doc = await stock.getDocument(Number(ctx.params.id));
     if (!doc) throw bad('Hujjat topilmadi / Документ не найден');
     return doc;
   });
 
   // Yangi
-  router.post('/api/documents', (ctx) => stock.createDocument(ctx.body, ctx.user));
+  router.post('/api/documents', async (ctx) => await stock.createDocument(ctx.body, ctx.user));
   // Tahrirlash
-  router.put('/api/documents/:id', (ctx) => stock.updateDocument(Number(ctx.params.id), ctx.body));
+  router.put('/api/documents/:id', async (ctx) => await stock.updateDocument(Number(ctx.params.id), ctx.body));
   // O'chirish
-  router.del('/api/documents/:id', (ctx) => stock.deleteDocument(Number(ctx.params.id)));
+  router.del('/api/documents/:id', async (ctx) => await stock.deleteDocument(Number(ctx.params.id)));
 
   // Провести (kassir ham o'tkazishi mumkin — POS savdo uchun)
-  router.post('/api/documents/:id/post', (ctx) => {
-    const r = stock.post(Number(ctx.params.id), ctx.user);
-    return { ...r, document: stock.getDocument(Number(ctx.params.id)) };
+  router.post('/api/documents/:id/post', async (ctx) => {
+    const r = await stock.post(Number(ctx.params.id), ctx.user);
+    return { ...r, document: await stock.getDocument(Number(ctx.params.id)) };
   }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'CASHIER'] });
 
   // Отменить проведение
-  router.post('/api/documents/:id/unpost', (ctx) => {
-    const r = stock.unpost(Number(ctx.params.id), ctx.user);
-    return { ...r, document: stock.getDocument(Number(ctx.params.id)) };
+  router.post('/api/documents/:id/unpost', async (ctx) => {
+    const r = await stock.unpost(Number(ctx.params.id), ctx.user);
+    return { ...r, document: await stock.getDocument(Number(ctx.params.id)) };
   }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER'] });
 
   // Kataloglarni to'ldirish uchun
-  router.get('/api/documents-meta/types', () => ({
+  router.get('/api/documents-meta/types', async () => ({
     types: Object.entries(TYPE_LABELS).map(([value, l]) => ({ value, label: l })),
     reasons: Object.entries(ISSUE_REASONS).map(([value, l]) => ({ value, label: l })),
   }));
 
   // Hisobot uchun savdo (sale) hujjatlari bo'yicha
-  router.get('/api/documents-lookup/sales', (ctx) => {
+  router.get('/api/documents-lookup/sales',async (ctx) => {
     const where = ["d.type='ISSUE'", "d.status='POSTED'", "d.base_type='SALE'"];
     const params = [];
     if (ctx.query.date_from) { where.push('d.date >= ?'); params.push(ctx.query.date_from); }
@@ -137,16 +137,16 @@ function register(router) {
   });
 
   // Avtomatik to'ldirish: SKU yoki barcode bo'yicha qoldiq
-  router.get('/api/products-lookup/stock', (ctx) => {
+  router.get('/api/products-lookup/stock',async (ctx) => {
     const code = (ctx.query.code || '').trim();
     if (!code) throw bad('Kod kiriting / Введите код');
-    const p = get(
+    const p = await get(
       `SELECT * FROM catalog_products WHERE barcode = ? OR sku = ? OR lower(name_ru) = lower(?) OR lower(name_uz) = lower(?) LIMIT 1`,
       code, code, code, code
     );
     if (!p) throw bad('Tovar topilmadi / Товар не найден: ' + code);
     const whId = Number(ctx.query.warehouse_id) || 0;
-    const balances = all(
+    const balances = await all(
       `SELECT b.warehouse_id, b.location_id, b.qty, b.amount, w.name_ru AS warehouse, w.name_uz AS warehouse_uz,
               l.code AS location_code
          FROM reg_stock_balances b
@@ -160,7 +160,7 @@ function register(router) {
   });
 
   // Barcha tovar + qoldiq (katalog + registr)
-  router.get('/api/products-lookup/list', (ctx) => {
+  router.get('/api/products-lookup/list',async (ctx) => {
     const whId = Number(ctx.query.warehouse_id) || 0;
     const where = ['p.is_active = 1'];
     const params = [];

@@ -33,8 +33,8 @@ const ROOM_KINDS = {
  * @param {number} warehouseId
  * @param {object} opt  {cols, rooms, racks_per_room, levels, slots}
  */
-function buildPlan(warehouseId, opt = {}) {
-  const wh = get('SELECT * FROM catalog_warehouses WHERE id = ?', warehouseId);
+async function buildPlan(warehouseId, opt = {}) {
+  const wh = await get('SELECT * FROM catalog_warehouses WHERE id = ?', warehouseId);
   if (!wh) throw notFound('Ombor topilmadi / Склад не найден');
 
   const cols = int(opt.cols ?? wh.map_cols, 3, 1, 10);
@@ -46,8 +46,8 @@ function buildPlan(warehouseId, opt = {}) {
   const startNum = 100;
   let roomsCreated = 0, racksCreated = 0, cellsCreated = 0;
 
-  tx(() => {
-    run('UPDATE catalog_warehouses SET map_cols=?, map_rooms=? WHERE id=?', cols, roomCount, warehouseId);
+  await tx(async () => {
+    await run('UPDATE catalog_warehouses SET map_cols=?, map_rooms=? WHERE id=?', cols, roomCount, warehouseId);
 
     for (let i = 0; i < roomCount; i++) {
       const code = String(startNum + i + 1);
@@ -62,7 +62,7 @@ function buildPlan(warehouseId, opt = {}) {
       else if (row === Math.floor(roomCount / cols) - 1) kind = 'COOLING';
 
       const roomCode = wh.code + '-' + code;
-      run(
+      await run(
         `INSERT INTO catalog_rooms (warehouse_id, code, name_uz, name_ru, kind, floor, pos_x, pos_y, width, height, temperature, is_active)
          VALUES (?,?,?,?,?,1,?,?,2,2,?,1)
          ON CONFLICT(warehouse_id, code) DO UPDATE SET kind=excluded.kind`,
@@ -72,12 +72,12 @@ function buildPlan(warehouseId, opt = {}) {
         kind, col * 3, row * 3,
         kind === 'COOLING' ? 4 : null
       );
-      const room = get('SELECT id FROM catalog_rooms WHERE warehouse_id=? AND code=?', warehouseId, roomCode);
+      const room = await get('SELECT id FROM catalog_rooms WHERE warehouse_id=? AND code=?', warehouseId, roomCode);
       const roomId = room.id;
 
       for (let r = 1; r <= racksPerRoom; r++) {
         const rackCode = `${roomCode}-S${String(r).padStart(2, '0')}`;
-        run(
+        await run(
           `INSERT INTO catalog_racks (room_id, code, name_uz, name_ru, kind, pos_x, pos_y, levels, capacity, is_active)
            VALUES (?,?,?,?,'RACK',?,?,?,0,1)
            ON CONFLICT(room_id, code) DO UPDATE SET levels=excluded.levels`,
@@ -86,13 +86,13 @@ function buildPlan(warehouseId, opt = {}) {
           `${code}-комната, стеллаж ${r}`,
           (r - 1) % slots, Math.floor((r - 1) / slots), levels
         );
-        const rack = get('SELECT id FROM catalog_racks WHERE room_id=? AND code=?', roomId, rackCode);
+        const rack = await get('SELECT id FROM catalog_racks WHERE room_id=? AND code=?', roomId, rackCode);
         const rackId = rack.id;
 
         for (let l = 1; l <= levels; l++) {
           for (let p = 1; p <= slots; p++) {
             const cellCode = `${rackCode}-${l}-${String(p).padStart(2, '0')}`;
-            const res = run(
+            const res = await run(
               `INSERT INTO catalog_locations
                  (warehouse_id, code, name_uz, name_ru, kind, room_id, rack_id, level_no, pos, capacity, is_active)
                VALUES (?,?,?,?,'CELL',?,?,?,?,0,1)
@@ -130,8 +130,8 @@ function int(v, dflt, min, max) {
 // ============================================================ 1-QAVAT: XONALAR
 
 /** Ombordagi barcha xonalar (reja + statistika) */
-function buildingPlan(warehouseId, q = {}) {
-  const wh = get('SELECT * FROM catalog_warehouses WHERE id = ?', warehouseId);
+async function buildingPlan(warehouseId, q = {}) {
+  const wh = await get('SELECT * FROM catalog_warehouses WHERE id = ?', warehouseId);
   if (!wh) throw notFound('Ombor topilmadi / Склад не найден');
 
   const where = ['r.warehouse_id = ?', 'r.is_active = 1'];
@@ -142,7 +142,7 @@ function buildingPlan(warehouseId, q = {}) {
     for (let i = 0; i < 3; i++) params.push(`%${q.q}%`);
   }
 
-  const rooms = all(
+  const rooms = await all(
     `SELECT r.*,
             (SELECT COUNT(*) FROM catalog_racks k WHERE k.room_id = r.id AND k.is_active = 1) AS racks,
             (SELECT COUNT(*) FROM catalog_locations l WHERE l.room_id = r.id AND l.is_active = 1) AS cells,
@@ -186,11 +186,11 @@ function buildingPlan(warehouseId, q = {}) {
 // ============================================================ 2-QAVAT: XONA ICHI
 
 /** Xona ichidagi stellajlar va ularning kataklari */
-function roomDetail(roomId, q = {}) {
-  const room = get('SELECT * FROM catalog_rooms WHERE id = ?', roomId);
+async function roomDetail(roomId, q = {}) {
+  const room = await get('SELECT * FROM catalog_rooms WHERE id = ?', roomId);
   if (!room) throw notFound('Xona topilmadi / Комната не найдена');
 
-  const racks = all(
+  const racks = await all(
     `SELECT k.*,
             (SELECT COUNT(*) FROM catalog_locations l WHERE l.rack_id = k.id AND l.is_active = 1) AS cells,
             (SELECT COUNT(*) FROM reg_stock_balances b
@@ -219,7 +219,7 @@ function roomDetail(roomId, q = {}) {
     for (let i = 0; i < 4; i++) cellParams.push(`%${q.q}%`);
   }
 
-  const contents = all(
+  const contents = await all(
     `SELECT l.id AS location_id, l.rack_id, l.level_no, l.pos, l.code, l.capacity,
             b.product_id, b.qty, b.amount,
             p.sku, p.barcode, p.name_ru, p.name_uz, p.image_url, p.color, p.min_stock,
@@ -250,7 +250,7 @@ function roomDetail(roomId, q = {}) {
   const rackMap = new Map(rackList.map((k) => [k.id, k]));
 
   // bo'sh kataklarni ham qo'shish
-  const emptyCells = all(
+  const emptyCells = await all(
     `SELECT id, rack_id, level_no, pos, code, capacity FROM catalog_locations
       WHERE room_id = ? AND is_active = 1`, roomId
   );
@@ -281,7 +281,7 @@ function roomDetail(roomId, q = {}) {
     }
   }
 
-  const wh = get('SELECT id, code, name_ru, name_uz FROM catalog_warehouses WHERE id=?', room.warehouse_id);
+  const wh = await get('SELECT id, code, name_ru, name_uz FROM catalog_warehouses WHERE id=?', room.warehouse_id);
 
   return {
     room, warehouse: wh, racks: rackList,
@@ -299,8 +299,8 @@ function roomDetail(roomId, q = {}) {
 // ============================================================ 3-QAVAT: TOVAR KARTASI
 
 /** Tovar kartasi: rasm + barcha ombor/xona/joy ma'lumotlari */
-function productCard(productId) {
-  const p = get(
+async function productCard(productId) {
+  const p = await get(
     `SELECT p.*, u.code AS unit_code, u.name_ru AS unit_ru, u.name_uz AS unit_uz,
             br.id AS brand_id, br.name_ru AS brand, br.name_uz AS brand_uz,
             cat.id AS cat_id, cat.name_ru AS category, cat.name_uz AS category_uz,
@@ -314,7 +314,7 @@ function productCard(productId) {
   );
   if (!p) throw notFound('Tovar topilmadi / Товар не найден');
 
-  const placement = all(
+  const placement = await all(
     `SELECT b.warehouse_id, w.code AS warehouse_code, w.name_ru AS warehouse_ru, w.name_uz AS warehouse_uz,
             b.location_id, l.code AS location_code, l.level_no, l.pos,
             r.id AS room_id, r.code AS room_code, r.name_ru AS room_ru, r.name_uz AS room_uz, r.kind AS room_kind,
@@ -331,7 +331,7 @@ function productCard(productId) {
   );
 
   // omborlar kesimida
-  const byWarehouse = all(
+  const byWarehouse = await all(
     `SELECT b.warehouse_id, w.code, w.name_ru, w.name_uz, SUM(b.qty) AS qty, SUM(b.amount) AS amount
        FROM reg_stock_balances b JOIN catalog_warehouses w ON w.id = b.warehouse_id
       WHERE b.product_id = ? AND b.qty <> 0
@@ -340,7 +340,7 @@ function productCard(productId) {
   );
 
   // harakatlar
-  const movements = all(
+  const movements = await all(
     `SELECT m.date, m.doc_type, m.qty_in, m.qty_out, d.number,
             w.name_ru AS warehouse_ru, w.name_uz AS warehouse_uz
        FROM reg_stock_movements m
@@ -414,17 +414,17 @@ function uploadsInfo() {
 // ============================================================ JOYLASH (xona bo'yicha)
 
 /** Xona bo'yicha avtomatik joylash */
-function autoPlaceRoom(roomId) {
-  const room = get('SELECT * FROM catalog_rooms WHERE id=?', roomId);
+async function autoPlaceRoom(roomId) {
+  const room = await get('SELECT * FROM catalog_rooms WHERE id=?', roomId);
   if (!room) throw notFound('Xona topilmadi / Комната не найдена');
 
-  const need = all(
+  const need = await all(
     `SELECT b.product_id, SUM(b.qty) AS qty
        FROM reg_stock_balances b JOIN catalog_products p ON p.id = b.product_id
       WHERE b.warehouse_id = ? AND b.qty > 0 AND COALESCE(b.location_id,0) = 0
       GROUP BY b.product_id ORDER BY SUM(b.qty) DESC`, room.warehouse_id
   );
-  const free = all(
+  const free = await all(
     `SELECT l.id FROM catalog_locations l
       WHERE l.room_id = ? AND l.is_active = 1
         AND NOT EXISTS (SELECT 1 FROM reg_stock_balances b
@@ -438,12 +438,12 @@ function autoPlaceRoom(roomId) {
 
   let applied = null;
   if (plan.length) {
-    const created = stock.createDocument({
+    const created = await stock.createDocument({
       type: 'PLACEMENT', date: new Date().toISOString().slice(0, 10),
       warehouse_id: room.warehouse_id, note: `Avtomatik joylash: ${room.code}`,
       lines: plan.map((c) => ({ product_id: c.product_id, location_id: c.location_id, qty: c.qty, price: 0 })),
     }, { id: null, login: 'system' });
-    stock.post(created.document.id, { id: null, login: 'system' });
+    await stock.post(created.document.id, { id: null, login: 'system' });
     applied = { document_id: created.document.id, lines: plan.length };
   }
   return {
@@ -459,11 +459,11 @@ function autoPlaceRoom(roomId) {
  * Avval STORAGE xonalari, keyin QUARANTINE / COOLING
  * (RECEIVING va SHIPPING — vaqtinchalik zaxira).
  */
-function autoPlaceWarehouse(warehouseId) {
-  const wh = get('SELECT * FROM catalog_warehouses WHERE id=?', warehouseId);
+async function autoPlaceWarehouse(warehouseId) {
+  const wh = await get('SELECT * FROM catalog_warehouses WHERE id=?', warehouseId);
   if (!wh) throw notFound('Ombor topilmadi / Склад не найден');
 
-  const rooms = all(
+  const rooms = await all(
     `SELECT id, code, kind FROM catalog_rooms
       WHERE warehouse_id = ? AND is_active = 1
       ORDER BY CASE kind WHEN 'STORAGE' THEN 0 WHEN 'QUARANTINE' THEN 1
@@ -475,7 +475,7 @@ function autoPlaceWarehouse(warehouseId) {
   let total = 0, usedRooms = 0;
   const detail = [];
   for (const r of rooms) {
-    const res = autoPlaceRoom(r.id);
+    const res = await autoPlaceRoom(r.id);
     if (res.to_place > 0) {
       total += res.to_place;
       usedRooms++;
@@ -488,58 +488,58 @@ function autoPlaceWarehouse(warehouseId) {
 
 // ============================================================ ROUTES
 
-function register(router) {
-  router.get('/api/plan/rooms', (ctx) => {
+async function register(router) {
+  router.get('/api/plan/rooms', async (ctx) => {
     const wh = Number(ctx.query.warehouse_id);
     if (!wh) throw bad('warehouse_id kerak / Требуется warehouse_id');
     return buildingPlan(wh, ctx.query);
   });
 
-  router.post('/api/plan/build', (ctx) => {
+  router.post('/api/plan/build', async (ctx) => {
     const b = ctx.body || {};
     const wh = Number(b.warehouse_id);
     if (!wh) throw bad('warehouse_id kerak / Требуется warehouse_id');
     return buildPlan(wh, b);
   }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER'] });
 
-  router.get('/api/plan/room', (ctx) => {
+  router.get('/api/plan/room', async (ctx) => {
     const id = Number(ctx.query.room_id);
     if (!id) throw bad('room_id kerak / Требуется room_id');
     return roomDetail(id, ctx.query);
   });
 
-  router.get('/api/plan/product', (ctx) => {
+  router.get('/api/plan/product', async (ctx) => {
     const id = Number(ctx.query.product_id);
     if (!id) throw bad('product_id kerak / Требуется product_id');
     return productCard(id);
   });
 
-  router.post('/api/plan/room/auto-place', (ctx) => {
+  router.post('/api/plan/room/auto-place', async (ctx) => {
     const id = Number((ctx.body || {}).room_id);
     if (!id) throw bad('room_id kerak / Требуется room_id');
     return autoPlaceRoom(id);
   }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER'] });
 
-  router.post('/api/plan/warehouse/auto-place', (ctx) => {
+  router.post('/api/plan/warehouse/auto-place', async (ctx) => {
     const id = Number((ctx.body || {}).warehouse_id);
     if (!id) throw bad('warehouse_id kerak / Требуется warehouse_id');
     return autoPlaceWarehouse(id);
   }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER'] });
 
   // xonaga stellaj qo'shish (1 qator × 4 joy bilan)
-  router.post('/api/plan/room/rack', (ctx) => {
+  router.post('/api/plan/room/rack',async (ctx) => {
     const roomId = Number((ctx.body || {}).room_id);
     if (!roomId) throw bad('room_id kerak / Требуется room_id');
-    const room = get('SELECT r.*, w.id AS wh_id FROM catalog_rooms r JOIN catalog_warehouses w ON w.id=r.warehouse_id WHERE r.id=?', roomId);
+    const room = await get('SELECT r.*, w.id AS wh_id FROM catalog_rooms r JOIN catalog_warehouses w ON w.id=r.warehouse_id WHERE r.id=?', roomId);
     if (!room) throw notFound('Xona topilmadi / Комната не найдена');
-    const n = get('SELECT COUNT(*) AS c FROM catalog_racks WHERE room_id=?', roomId).c + 1;
+    const n = (await get('SELECT COUNT(*) AS c FROM catalog_racks WHERE room_id=?', roomId)).c + 1;
     const code = `${room.code}-S${String(n).padStart(2, '0')}`;
-    run(`INSERT INTO catalog_racks (room_id, code, name_uz, name_ru, kind, levels, is_active)
+    await run(`INSERT INTO catalog_racks (room_id, code, name_uz, name_ru, kind, levels, is_active)
          VALUES (?,?,?,?,'RACK',1,1)`,
       roomId, code, `${n}-stellaj`, `Стеллаж ${n}`);
-    const rack = get('SELECT id FROM catalog_racks WHERE room_id=? AND code=?', roomId, code);
+    const rack = await get('SELECT id FROM catalog_racks WHERE room_id=? AND code=?', roomId, code);
     for (let p = 1; p <= 4; p++) {
-      run(`INSERT INTO catalog_locations (warehouse_id, code, name_uz, name_ru, kind, room_id, rack_id, level_no, pos, capacity, is_active)
+      await run(`INSERT INTO catalog_locations (warehouse_id, code, name_uz, name_ru, kind, room_id, rack_id, level_no, pos, capacity, is_active)
            VALUES (?,?,?,?,'CELL',?,?,1,?,0,1) ON CONFLICT(warehouse_id, code) DO NOTHING`,
         room.wh_id, `${code}-1-${String(p).padStart(2, '0')}`, `${code} / 1-qator / ${p}-joy`, `${code} / ряд 1 / место ${p}`,
         roomId, rack.id, p);
@@ -548,18 +548,18 @@ function register(router) {
   }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER'] });
 
   // stellajga qator qo'shish (yangi level)
-  router.post('/api/plan/rack/row', (ctx) => {
+  router.post('/api/plan/rack/row',async (ctx) => {
     const rackId = Number((ctx.body || {}).rack_id);
     if (!rackId) throw bad('rack_id kerak / Требуется rack_id');
-    const rack = get(`SELECT k.*, r.warehouse_id AS wh_id, r.id AS room_id FROM catalog_racks k JOIN catalog_rooms r ON r.id=k.room_id WHERE k.id=?`, rackId);
+    const rack = await get(`SELECT k.*, r.warehouse_id AS wh_id, r.id AS room_id FROM catalog_racks k JOIN catalog_rooms r ON r.id=k.room_id WHERE k.id=?`, rackId);
     if (!rack) throw notFound('Stellaj topilmadi / Стеллаж не найден');
     const newLevel = (rack.levels || 0) + 1;
-    run('UPDATE catalog_racks SET levels=? WHERE id=?', newLevel, rackId);
+    await run('UPDATE catalog_racks SET levels=? WHERE id=?', newLevel, rackId);
     // avvalgi qatordagi joylar soniga qarab
-    let slots = get(`SELECT COUNT(*) AS c FROM catalog_locations WHERE rack_id=? AND level_no=1`, rackId).c;
+    let slots = (await get(`SELECT COUNT(*) AS c FROM catalog_locations WHERE rack_id=? AND level_no=1`, rackId)).c;
     if (!slots) slots = 4;
     for (let p = 1; p <= slots; p++) {
-      run(`INSERT INTO catalog_locations (warehouse_id, code, name_uz, name_ru, kind, room_id, rack_id, level_no, pos, capacity, is_active)
+      await run(`INSERT INTO catalog_locations (warehouse_id, code, name_uz, name_ru, kind, room_id, rack_id, level_no, pos, capacity, is_active)
            VALUES (?,?,?,?,'CELL',?,?,?,?,0,1) ON CONFLICT(warehouse_id, code) DO NOTHING`,
         rack.wh_id, `${rack.code}-${newLevel}-${String(p).padStart(2, '0')}`, `${rack.code} / ${newLevel}-qator / ${p}-joy`, `${rack.code} / ряд ${newLevel} / место ${p}`,
         rack.room_id, rackId, newLevel, p);
@@ -568,40 +568,40 @@ function register(router) {
   }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER'] });
 
   // o'chirish (soft delete: is_active=0)
-  router.post('/api/plan/delete', (ctx) => {
+  router.post('/api/plan/delete',async (ctx) => {
     const b = ctx.body || {};
     if (b.type === 'room' && b.id) {
-      run('UPDATE catalog_locations SET is_active=0 WHERE room_id=?', Number(b.id));
-      run('UPDATE catalog_racks SET is_active=0 WHERE room_id=?', Number(b.id));
-      run('UPDATE catalog_rooms SET is_active=0 WHERE id=?', Number(b.id));
+      await run('UPDATE catalog_locations SET is_active=0 WHERE room_id=?', Number(b.id));
+      await run('UPDATE catalog_racks SET is_active=0 WHERE room_id=?', Number(b.id));
+      await run('UPDATE catalog_rooms SET is_active=0 WHERE id=?', Number(b.id));
       return { ok: true };
     }
     if (b.type === 'rack' && b.id) {
-      run('UPDATE catalog_locations SET is_active=0 WHERE rack_id=?', Number(b.id));
-      run('UPDATE catalog_racks SET is_active=0 WHERE id=?', Number(b.id));
+      await run('UPDATE catalog_locations SET is_active=0 WHERE rack_id=?', Number(b.id));
+      await run('UPDATE catalog_racks SET is_active=0 WHERE id=?', Number(b.id));
       return { ok: true };
     }
     if (b.type === 'row' && b.rack_id && b.level) {
-      run('UPDATE catalog_locations SET is_active=0 WHERE rack_id=? AND level_no=?', Number(b.rack_id), Number(b.level));
+      await run('UPDATE catalog_locations SET is_active=0 WHERE rack_id=? AND level_no=?', Number(b.rack_id), Number(b.level));
       return { ok: true };
     }
     if (b.type === 'cell' && b.id) {
-      run('UPDATE catalog_locations SET is_active=0 WHERE id=?', Number(b.id));
+      await run('UPDATE catalog_locations SET is_active=0 WHERE id=?', Number(b.id));
       return { ok: true };
     }
     throw bad('type (room|rack|row|cell) va id/rack_id/level kerak');
   }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER'] });
 
   // qatorga yacheyka qo'shish
-  router.post('/api/plan/row/cell', (ctx) => {
+  router.post('/api/plan/row/cell',async (ctx) => {
     const rackId = Number((ctx.body || {}).rack_id);
     const level = Number((ctx.body || {}).level);
     if (!rackId || !level) throw bad('rack_id va level kerak / Требуется rack_id и level');
-    const rack = get(`SELECT k.*, r.warehouse_id AS wh_id, r.id AS room_id FROM catalog_racks k JOIN catalog_rooms r ON r.id=k.room_id WHERE k.id=?`, rackId);
+    const rack = await get(`SELECT k.*, r.warehouse_id AS wh_id, r.id AS room_id FROM catalog_racks k JOIN catalog_rooms r ON r.id=k.room_id WHERE k.id=?`, rackId);
     if (!rack) throw notFound('Stellaj topilmadi / Стеллаж не найден');
-    const pos = (get(`SELECT COALESCE(MAX(pos),0) AS m FROM catalog_locations WHERE rack_id=? AND level_no=?`, rackId, level).m || 0) + 1;
+    const pos = ((await get(`SELECT COALESCE(MAX(pos),0) AS m FROM catalog_locations WHERE rack_id=? AND level_no=?`, rackId, level)).m || 0) + 1;
     const code = `${rack.code}-${level}-${String(pos).padStart(2, '0')}`;
-    run(`INSERT INTO catalog_locations (warehouse_id, code, name_uz, name_ru, kind, room_id, rack_id, level_no, pos, capacity, is_active)
+    await run(`INSERT INTO catalog_locations (warehouse_id, code, name_uz, name_ru, kind, room_id, rack_id, level_no, pos, capacity, is_active)
          VALUES (?,?,?,?,'CELL',?,?,?,?,0,1) ON CONFLICT(warehouse_id, code) DO NOTHING`,
       rack.wh_id, code, `${rack.code} / ${level}-qator / ${pos}-joy`, `${rack.code} / ряд ${level} / место ${pos}`,
       rack.room_id, rackId, level, pos);
@@ -610,13 +610,13 @@ function register(router) {
 
   // omborga yangi xona qo'shish
   // racks/levels/slots berilsa, xona ostidagi stellaj va kataklar ham yaratiladi
-  router.post('/api/plan/room', (ctx) => {
+  router.post('/api/plan/room',async (ctx) => {
     const b = ctx.body || {};
     const whId = Number(b.warehouse_id);
     if (!whId) throw bad('warehouse_id kerak / Требуется warehouse_id');
-    const wh = get('SELECT * FROM catalog_warehouses WHERE id=?', whId);
+    const wh = await get('SELECT * FROM catalog_warehouses WHERE id=?', whId);
     if (!wh) throw notFound('Ombor topilmadi / Склад не найден');
-    const n = get('SELECT COUNT(*) AS c FROM catalog_rooms WHERE warehouse_id=?', whId).c;
+    const n = (await get('SELECT COUNT(*) AS c FROM catalog_rooms WHERE warehouse_id=?', whId)).c;
     const code = b.code && String(b.code).trim() ? String(b.code).trim() : wh.code + '-' + (101 + n);
     const name = b.name && String(b.name).trim() ? String(b.name).trim() : `Xona ${code}`;
     const row = Math.floor(n / 3), col = n % 3;
@@ -624,25 +624,25 @@ function register(router) {
     const levels = int(b.levels, 1, 1, 10);
     const slots = int(b.slots, 4, 1, 40);
 
-    const created = tx(() => {
-      const res = run(
+    const created = await tx(async () => {
+      const res = await run(
         `INSERT INTO catalog_rooms (warehouse_id, code, name_uz, name_ru, kind, floor, pos_x, pos_y, width, height, is_active)
          VALUES (?,?,?,?,?,1,?,?,2,2,1)
          ON CONFLICT(warehouse_id, code) DO NOTHING`,
         whId, code, name, name, b.kind || 'STORAGE', col * 3, row * 3
       );
       if (!res.changes) throw bad('Bu kodli xona allaqachon bor / Комната с таким кодом уже есть');
-      const room = get('SELECT id FROM catalog_rooms WHERE warehouse_id=? AND code=?', whId, code);
+      const room = await get('SELECT id FROM catalog_rooms WHERE warehouse_id=? AND code=?', whId, code);
 
       let cells = 0;
       for (let s = 1; s <= racks; s++) {
         const rCode = `${code}-S${String(s).padStart(2, '0')}`;
-        run(`INSERT INTO catalog_racks (room_id, code, name_uz, name_ru, kind, levels, is_active)
+        await run(`INSERT INTO catalog_racks (room_id, code, name_uz, name_ru, kind, levels, is_active)
              VALUES (?,?,?,?,'RACK',?,1)`, room.id, rCode, `${s}-stellaj`, `Стеллаж ${s}`, levels);
-        const rack = get('SELECT id FROM catalog_racks WHERE room_id=? AND code=?', room.id, rCode);
+        const rack = await get('SELECT id FROM catalog_racks WHERE room_id=? AND code=?', room.id, rCode);
         for (let l = 1; l <= levels; l++) {
           for (let p = 1; p <= slots; p++) {
-            run(`INSERT INTO catalog_locations (warehouse_id, code, name_uz, name_ru, kind, room_id, rack_id, level_no, pos, capacity, is_active)
+            await run(`INSERT INTO catalog_locations (warehouse_id, code, name_uz, name_ru, kind, room_id, rack_id, level_no, pos, capacity, is_active)
                  VALUES (?,?,?,?,'CELL',?,?,?,?,0,1) ON CONFLICT(warehouse_id, code) DO NOTHING`,
               whId, `${rCode}-${l}-${String(p).padStart(2, '0')}`,
               `${rCode} / ${l}-qator / ${p}-joy`, `${rCode} / ряд ${l} / место ${p}`,
@@ -658,17 +658,17 @@ function register(router) {
   }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER'] });
 
   // rasm
-  router.post('/api/plan/upload', (ctx) => {
+  router.post('/api/plan/upload',async (ctx) => {
     const url = saveImage(ctx.body?.image, ctx.body?.product_id);
     if (ctx.body?.product_id) {
-      run('UPDATE catalog_products SET image_url=? WHERE id=?', url, Number(ctx.body.product_id));
+      await run('UPDATE catalog_products SET image_url=? WHERE id=?', url, Number(ctx.body.product_id));
     }
     return { ok: true, url };
   });
 
-  router.get('/api/plan/uploads', () => uploadsInfo());
+  router.get('/api/plan/uploads', async () => uploadsInfo());
 
-  router.get('/api/plan/kinds', () => ({
+  router.get('/api/plan/kinds', async () => ({
     kinds: Object.entries(ROOM_KINDS).map(([value, l]) => ({ value, label: l })),
   }));
 }

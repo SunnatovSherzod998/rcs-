@@ -17,7 +17,8 @@ fs.mkdirSync(tmp, { recursive: true });
 function walk(dir) {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
     const p = path.join(dir, e.name);
-    return e.isDirectory() ? walk(p) : (p.endsWith('.js') ? [p] : []);
+    if (e.isDirectory()) return walk(p);
+    return (p.endsWith('.js') || p.endsWith('.mjs')) ? [p] : [];
   });
 }
 

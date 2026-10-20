@@ -27,7 +27,7 @@ function assert(cond, label, extra = '') {
 
 (async () => {
   console.log('\n=== 1. LOGIN ===');
-  let r = await api('POST', '/api/auth/login', { login: 'admin', password: 'admin' });
+  let r = await api('POST', '/api/auth/login', { login: 'admin', password: process.env.ADMIN_PASSWORD || 'ADMIN' });
   assert(r.status === 200, 'admin kirish', JSON.stringify(r.json));
   token = r.json.data.token;
 
@@ -52,9 +52,15 @@ function assert(cond, label, extra = '') {
   const TSKU = 'API-TEST-001';
   const NOTE = 'API-TEST';
   const cleanupDocs = async () => {
-    const rows = (await api('GET', '/api/documents?limit=500')).json.data.rows
+    // izolyatsiya: faqat testga tegishli SKU bilan bog'liq hujjatlar
+    const byNote = (await api('GET', '/api/documents?limit=500')).json.data.rows
       .filter((x) => x.note === NOTE);
-    for (const doc of rows.reverse()) {
+    const bySku = (await api('GET', `/api/documents?q=${encodeURIComponent(TSKU)}&limit=500`)).json.data.rows
+      .filter((x) => x.note === NOTE || x.type);
+    const seen = new Set();
+    for (const doc of [...byNote, ...bySku]) {
+      if (seen.has(doc.id)) continue;
+      seen.add(doc.id);
       try {
         if (doc.status === 'POSTED') await api('POST', `/api/documents/${doc.id}/unpost`);
         if (doc.status === 'DRAFT') await api('DELETE', '/api/documents/' + doc.id);
@@ -244,16 +250,26 @@ function assert(cond, label, extra = '') {
   assert(res.status === 200 && csv.includes(TSKU), 'CSV eksport (balances), ' + csv.split('\n').length + ' qator');
 
   console.log('\n=== 12. HUQUQLAR ===');
-  await api('POST', '/api/users', { login: 'kassir', password: '1234', full_name: 'Kassir', role: 'CASHIER' });
+  // Parol siyosati: kuchsiz parollar rad etiladi
+  r = await api('POST', '/api/users', { login: 'kassir', password: '1234', full_name: 'Kassir', role: 'CASHIER' });
+  assert(r.status === 400 && r.json?.error?.code === 'PW_SHORT', 'qisqa parol rad etiladi', JSON.stringify(r.json));
+  r = await api('POST', '/api/users', { login: 'kassir', password: '123456789012', full_name: 'Kassir', role: 'CASHIER' });
+  assert(r.status === 400 && r.json?.error?.code === 'PW_ONLY_DIGITS', 'faqat sonli parol rad etiladi', JSON.stringify(r.json));
+  r = await api('POST', '/api/users', { login: 'kassir', password: 'a1b2c3d45678', full_name: 'Kassir', role: 'CASHIER' });
+  assert(r.status === 400 && r.json?.error?.code === 'PW_LOWERCASE', 'kichik harfli parol rad etiladi', JSON.stringify(r.json));
+  r = await api('POST', '/api/users', { login: 'kassir', password: 'A1B2C3D45678', full_name: 'Kassir', role: 'CASHIER' });
+  assert(r.status === 200, 'siyosatga mos parol qabul qilindi', JSON.stringify(r.json));
   const adminToken = token;
-  r = await api('POST', '/api/auth/login', { login: 'kassir', password: '1234' });
+  r = await api('POST', '/api/auth/login', { login: 'kassir', password: 'A1B2C3D45678' });
   token = r.json.data.token;
   r = await api('GET', '/api/users');
   assert(r.status === 403, 'kassir foydalanuvchilarni ko‘ra olmaydi (403)');
   r = await api('GET', '/api/catalogs/products');
   assert(r.status === 200, 'kassir katalogni ko‘ra oladi');
   r = await api('POST', '/api/documents/1/post');
-  assert(r.status === 403, 'kassir проведение qila olmaydi (403)');
+  assert(r.status !== 403, 'kassir savdo hujjatini o‘tkazishi mumkin', JSON.stringify(r.json));
+  r = await api('GET', '/api/salary/list');
+  assert(r.status === 403, 'kassir ishchilar oyligini ko‘ra olmaydi (403)');
   token = adminToken;
 
   console.log('\n=== 13. TOZALASH ===');

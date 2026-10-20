@@ -9,6 +9,8 @@ import {
   toast, spinner, num, fmtDate, qtyFmt, today, money,
 } from '../ui.js';
 import { openEditModal, openHistoryModal } from './salary.js';
+import { attachPasswordMeter } from '../password-ui.js';
+import { analyzePassword, passwordMessage } from '../password.mjs';
 
 
 let metaCache = null;
@@ -545,13 +547,16 @@ export async function catalogPage(catKey, root) {
     // --- Xodim uchun: bir vaqtda foydalanuvchi akkaunti yaratish
     const acc = isNewEmployee ? buildForm([
       { name: 'login', type: 'text', label: { uz: 'Login', ru: 'Логин' } },
-      { name: 'password', type: 'text', label: { uz: 'Parol', ru: 'Пароль' } },
+      { name: 'password', type: 'password', label: { uz: 'Parol', ru: 'Пароль' } },
       { name: 'role', type: 'select', label: { uz: 'Rol', ru: 'Роль' }, options: [
         { value: 'CASHIER', label: { uz: 'Kassir', ru: 'Кассир' } },
         { value: 'WAREHOUSE_MANAGER', label: { uz: 'Ombor mudiri', ru: 'Управляющий складом' } },
         { value: 'OBSERVER', label: { uz: 'Kuzatuvchi', ru: 'Наблюдатель' } },
       ] },
     ], { role: 'CASHIER' }, refs) : null;
+
+    // Parol siyosati — jonli tekshiruv ro'yxati
+    const accMeter = acc ? attachPasswordMeter(acc.inputs.password) : null;
 
     const m = modal({
       title: (row ? t('edit') : t('add')) + ' · ' + tl(spec2.label),
@@ -595,7 +600,24 @@ export async function catalogPage(catKey, root) {
                   // Xodim + akkaunt (bir shaklda)
                   if (acc) {
                     const a = acc.collect();
-                    if (a.login && a.password) payload.user = { login: a.login, password: a.password, role: a.role };
+                    if (a.login || a.password) {
+                      if (!a.login || !a.password) {
+                        toast(getLang() === 'uz'
+                          ? 'Login va parolni ikkalasini to‘ldiring'
+                          : 'Заполните и логин, и пароль', 'err');
+                        acc.inputs[a.login ? 'password' : 'login'].focus();
+                        return;
+                      }
+                      // Parol siyosati — xato bo'lsa akkaunt yaratilmaydi
+                      const r = analyzePassword(a.password);
+                      if (!r.ok) {
+                        toast(passwordMessage(r), 'err');
+                        acc.inputs.password.focus();
+                        accMeter.update();
+                        return;
+                      }
+                      payload.user = { login: a.login, password: a.password, role: a.role };
+                    }
                   }
                   let saved = null;
                   if (row) await api.put(`/api/catalogs/${key}/${row.id}`, payload);

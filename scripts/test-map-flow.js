@@ -18,7 +18,7 @@ async function api(m, p, b) {
 function assert(c, l, e = '') { console.log(c ? '  OK   ' + l : '  FAIL ' + l + ' ' + e); if (!c) process.exitCode = 1; }
 
 (async () => {
-  const d = await api('POST', '/api/auth/login', { login: 'admin', password: 'admin' });
+  const d = await api('POST', '/api/auth/login', { login: 'admin', password: process.env.ADMIN_PASSWORD || 'ADMIN' });
   token = d.token;
   const today = new Date().toISOString().slice(0, 10);
   const NOTE = 'FLOW-TEST';

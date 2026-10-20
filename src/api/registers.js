@@ -6,10 +6,10 @@
 const { all, get } = require('../db');
 const stock = require('../services/stock');
 
-function register(router) {
+async function register(router) {
   // ------------------------------------------------------------ ОСТАТКИ
   // Текущий остаток (регистр накопления)
-  router.get('/api/register/stock/balances', (ctx) => {
+  router.get('/api/register/stock/balances',async (ctx) => {
     const q = ctx.query;
     const where = [];
     const params = [];
@@ -29,7 +29,7 @@ function register(router) {
     const limit = Math.min(Number(q.limit) || 200, 5000);
     const offset = Number(q.offset) || 0;
 
-    const rows = all(
+    const rows = await all(
       `SELECT p.id AS product_id, p.sku, p.barcode, p.name_ru, p.name_uz,
               u.code AS unit_code, u.name_ru AS unit_ru,
               cat.name_ru AS category, cat.name_uz AS category_uz,
@@ -53,7 +53,7 @@ function register(router) {
          LIMIT ? OFFSET ?`,
       ...params, limit, offset
     );
-    const tot = get(
+    const tot = await get(
       `SELECT COUNT(*) AS c, COALESCE(SUM(b.qty),0) AS qty, COALESCE(SUM(b.amount),0) AS amount
          FROM reg_stock_balances b
          JOIN catalog_products p ON p.id = b.product_id
@@ -66,7 +66,7 @@ function register(router) {
   });
 
   // Группировка по товару (все склады в одной строке)
-  router.get('/api/register/stock/balances/grouped', (ctx) => {
+  router.get('/api/register/stock/balances/grouped',async (ctx) => {
     const q = ctx.query;
     const where = [];
     const params = [];
@@ -103,7 +103,7 @@ function register(router) {
   });
 
   // Минимальные остатки / Maximum alert
-  router.get('/api/register/stock/below-min', (ctx) => {
+  router.get('/api/register/stock/below-min',async (ctx) => {
     const whId = Number(ctx.query.warehouse_id) || 0;
     return all(
       `SELECT p.id, p.sku, p.barcode, p.name_ru, p.name_uz, p.min_stock, p.max_stock,
@@ -124,7 +124,7 @@ function register(router) {
   });
 
   // ------------------------------------------------------------ ДВИЖЕНИЯ
-  router.get('/api/register/stock/movements', (ctx) => {
+  router.get('/api/register/stock/movements',async (ctx) => {
     const q = ctx.query;
     const where = [];
     const params = [];
@@ -141,7 +141,7 @@ function register(router) {
     const w = where.length ? 'WHERE ' + where.join(' AND ') : '';
     const limit = Math.min(Number(q.limit) || 200, 5000);
     const offset = Number(q.offset) || 0;
-    const rows = all(
+    const rows = await all(
       `SELECT m.*, p.sku, p.name_ru, p.name_uz, u.code AS unit_code,
               w.name_ru AS warehouse_name_ru, w.name_uz AS warehouse_name_uz,
               d.number AS doc_number, d.note AS doc_note, d.base_type,
@@ -156,7 +156,7 @@ function register(router) {
          ORDER BY m.date DESC, m.id DESC LIMIT ? OFFSET ?`,
       ...params, limit, offset
     );
-    const tot = get(
+    const tot = await get(
       `SELECT COUNT(*) AS c, COALESCE(SUM(m.qty_in),0) AS in_qty, COALESCE(SUM(m.qty_out),0) AS out_qty
          FROM reg_stock_movements m JOIN catalog_products p ON p.id=m.product_id ${w}`, ...params
     );
@@ -165,7 +165,7 @@ function register(router) {
 
   // ------------------------------------------------------------ ОБОРОТКА
   // Оборотно-сальдовая ведомость
-  router.get('/api/register/stock/turnover', (ctx) => {
+  router.get('/api/register/stock/turnover',async (ctx) => {
     const q = ctx.query;
     const whId = Number(q.warehouse_id) || 0;
     const from = q.date_from || '0000-01-01';
@@ -211,7 +211,7 @@ function register(router) {
   });
 
   // ------------------------------------------------------------ ВЗАИМОРАСЧЁТЫ
-  router.get('/api/register/debt/balances', (ctx) => {
+  router.get('/api/register/debt/balances',async (ctx) => {
     const q = ctx.query;
     const where = ['cp.is_active = 1'];
     const params = [];
@@ -222,7 +222,7 @@ function register(router) {
     }
     if (q.only_debt === '1') where.push('COALESCE(d.debt,0) <> 0');
 
-    const rows = all(
+    const rows = await all(
       `SELECT cp.id, cp.code, cp.name_ru, cp.name_uz, cp.kind, cp.phone, cp.tax_id,
               COALESCE(d.debt, 0) AS debt,
               COALESCE(d.debt_uz, 0) AS debt_uz
@@ -238,7 +238,7 @@ function register(router) {
     return rows;
   });
 
-  router.get('/api/register/debt/movements', (ctx) => {
+  router.get('/api/register/debt/movements',async (ctx) => {
     const q = ctx.query;
     const where = [];
     const params = [];
@@ -258,7 +258,7 @@ function register(router) {
   });
 
   // ------------------------------------------------------------ ЦЕНЫ
-  router.get('/api/register/prices', (ctx) => {
+  router.get('/api/register/prices',async (ctx) => {
     const whId = Number(ctx.query.warehouse_id) || 0;
     return all(
       `SELECT p.id, p.sku, p.name_ru, p.name_uz, p.cost_price, p.sale_price,

@@ -19,8 +19,8 @@ const DEFAULT_MAP = { zones: 'A,B,C', rows: 4, levels: 2, slots: 10 };
  * Omborga 2D skelet yaratadi (mavjud joylarni o'chirmaydi).
  * zones: "A,B,C" · rows: qatorlar · levels: qavatlar · slots: qator uzunligi
  */
-function buildWarehouseMap(warehouseId, opt = {}) {
-  const wh = get('SELECT * FROM catalog_warehouses WHERE id = ?', warehouseId);
+async function buildWarehouseMap(warehouseId, opt = {}) {
+  const wh = await get('SELECT * FROM catalog_warehouses WHERE id = ?', warehouseId);
   if (!wh) throw notFound('Ombor topilmadi / Склад не найден');
 
   const zones = String(opt.zones || wh.map_zones || DEFAULT_MAP.zones)
@@ -29,19 +29,19 @@ function buildWarehouseMap(warehouseId, opt = {}) {
   const levels = int(opt.levels ?? wh.map_levels, DEFAULT_MAP.levels, 1, 10);
   const slots = int(opt.slots ?? wh.map_slots, DEFAULT_MAP.slots, 1, 100);
 
-  run(
+  await run(
     `UPDATE catalog_warehouses SET map_zones=?, map_rows=?, map_levels=?, map_slots=? WHERE id=?`,
     zones.join(','), rows, levels, slots, warehouseId
   );
 
   let created = 0;
-  tx(() => {
+  await tx(async () => {
     for (const z of zones) {
       for (let r = 1; r <= rows; r++) {
         for (let l = 1; l <= levels; l++) {
           for (let p = 1; p <= slots; p++) {
             const code = `${z}-${String(r).padStart(2, '0')}-${l}-${String(p).padStart(2, '0')}`;
-            const res = run(
+            const res = await run(
               `INSERT INTO catalog_locations
                  (warehouse_id, code, name_uz, name_ru, kind, zone, row_no, level_no, pos, capacity, is_active)
                VALUES (?,?,?,?,'CELL',?,?,?,?,0,1)
@@ -74,8 +74,8 @@ function int(v, dflt, min, max) {
  * @param {number} warehouseId
  * @param {object} q  brand_id, category_id, only_occupied, q (qidiruv), group_by
  */
-function warehouseMap(warehouseId, q = {}) {
-  const wh = get('SELECT * FROM catalog_warehouses WHERE id = ?', warehouseId);
+async function warehouseMap(warehouseId, q = {}) {
+  const wh = await get('SELECT * FROM catalog_warehouses WHERE id = ?', warehouseId);
   if (!wh) throw notFound('Ombor topilmadi / Склад не найден');
 
   // 1) butun ombor bo'yicha pozitsiyalar + qoldiqlar
@@ -90,7 +90,7 @@ function warehouseMap(warehouseId, q = {}) {
     for (let i = 0; i < 4; i++) params.push(`%${q.q}%`);
   }
 
-  const contents = all(
+  const contents = await all(
     `SELECT b.location_id, b.product_id, b.qty, b.amount,
             p.sku, p.barcode, p.name_ru, p.name_uz, p.unit_id, p.min_stock, p.cost_price,
             p.brand_id, u.code AS unit_code, u.name_ru AS unit_ru,
@@ -107,7 +107,7 @@ function warehouseMap(warehouseId, q = {}) {
   );
 
   // 2) joylar (skelet) — faqat haqiqiy kataklar (zone to'ldirilgan)
-  const locs = all(
+  const locs = await all(
     `SELECT id, code, zone, row_no, level_no, pos, capacity, kind
        FROM catalog_locations
       WHERE warehouse_id = ? AND is_active = 1 AND zone IS NOT NULL AND zone <> ''
@@ -169,12 +169,12 @@ function warehouseMap(warehouseId, q = {}) {
 
   // 5) bo'sh joylar
   const emptyCells = zones.reduce((s, Z) => s + (Z.cells - Z.occupied), 0);
-  const withoutLocation = get(
+  const withoutLocation = (await get(
     `SELECT COUNT(DISTINCT b.product_id) AS c
        FROM reg_stock_balances b JOIN catalog_products p ON p.id = b.product_id
       WHERE b.warehouse_id = ? AND b.qty > 0 AND COALESCE(b.location_id, 0) = 0`,
     warehouseId
-  ).c;
+  )).c;
 
   return {
     warehouse: wh,
@@ -196,10 +196,10 @@ function warehouseMap(warehouseId, q = {}) {
 // ------------------------------------------------------------- Joylashuv
 
 /** Mahsulotni aynan katakka qo'yish (qo'lda joylash) */
-function placeProduct(warehouseId, locationId, productId, qty) {
-  const loc = get('SELECT * FROM catalog_locations WHERE id=? AND warehouse_id=?', locationId, warehouseId);
+async function placeProduct(warehouseId, locationId, productId, qty) {
+  const loc = await get('SELECT * FROM catalog_locations WHERE id=? AND warehouse_id=?', locationId, warehouseId);
   if (!loc) throw bad('Joy topilmadi / Место не найдено');
-  const p = get('SELECT * FROM catalog_products WHERE id=?', productId);
+  const p = await get('SELECT * FROM catalog_products WHERE id=?', productId);
   if (!p) throw bad('Tovar topilmadi / Товар не найден');
   if (loc.capacity > 0 && qty > loc.capacity) {
     throw bad(`Joy sig‘imi ${loc.capacity} — ${qty} sig‘maydi / Ёмкость ${loc.capacity}`);
@@ -211,11 +211,11 @@ function placeProduct(warehouseId, locationId, productId, qty) {
  * Bo'sh joylarga avtomatik joylash (1C uslubidagi "размещение").
  * `apply=1` bo'lsa haqiqiy PLACEMENT hujjati yaratib, o'tkazadi.
  */
-function autoPlace(warehouseId, opt = {}) {
+async function autoPlace(warehouseId, opt = {}) {
   const maxPerCell = Number(opt.max_per_cell) || 0;
   const zone = opt.zone || null;
 
-  const need = all(
+  const need = await all(
     `SELECT b.product_id, SUM(b.qty) AS qty, p.sku, p.name_ru, p.name_uz
        FROM reg_stock_balances b
        JOIN catalog_products p ON p.id = b.product_id
@@ -223,7 +223,7 @@ function autoPlace(warehouseId, opt = {}) {
       GROUP BY b.product_id ORDER BY SUM(b.qty) DESC`,
     warehouseId
   );
-  const free = all(
+  const free = await all(
     `SELECT l.id, l.code, l.zone, l.row_no, l.level_no, l.pos, l.capacity
        FROM catalog_locations l
       WHERE l.warehouse_id = ? AND l.is_active = 1 AND l.zone IS NOT NULL
@@ -251,25 +251,25 @@ function autoPlace(warehouseId, opt = {}) {
   };
 
   if (opt.apply === '1' || opt.apply === true) {
-    res.applied = applyPlacement(warehouseId, plan);
+    res.applied = await applyPlacement(warehouseId, plan);
   }
   return res;
 }
 
 /** Reja asosida PLACEMENT hujjati yaratib o'tkazadi */
-function applyPlacement(warehouseId, plan) {
+async function applyPlacement(warehouseId, plan) {
   if (!plan.length) return { documents: 0, lines: 0 };
   const date = new Date().toISOString().slice(0, 10);
   let docs = 0, lines = 0;
   // 1 hujjatda ko'pi bilan 200 qator
   for (let i = 0; i < plan.length; i += 200) {
     const chunk = plan.slice(i, i + 200);
-    const created = stock.createDocument({
+    const created = await stock.createDocument({
       type: 'PLACEMENT', date, warehouse_id: warehouseId,
       note: 'Avtomatik joylash (размещение)',
       lines: chunk.map((c) => ({ product_id: c.product_id, location_id: c.location_id, qty: c.qty, price: 0 })),
     }, { id: null, login: 'system' });
-    stock.post(created.document.id, { id: null, login: 'system' });
+    await stock.post(created.document.id, { id: null, login: 'system' });
     docs++;
     lines += chunk.length;
   }
@@ -279,12 +279,12 @@ function applyPlacement(warehouseId, plan) {
 // ------------------------------------------------------------- Turlar / Brendlar
 
 /** Turlar (категории) kesimidagi qoldiq — alohida ko'rsatish */
-function byCategories(warehouseId, q = {}) {
+async function byCategories(warehouseId, q = {}) {
   const where = ['1=1'];
   const params = [];
   if (warehouseId) { where.push('b.warehouse_id = ?'); params.push(warehouseId); }
   if (q.brand_id) { where.push('p.brand_id = ?'); params.push(q.brand_id); }
-  const rows = all(
+  const rows = await all(
     `SELECT cat.id, cat.code, cat.name_ru, cat.name_uz, cat.parent_id,
             COUNT(DISTINCT p.id) AS products,
             COUNT(DISTINCT b.product_id) AS in_stock,
@@ -302,7 +302,7 @@ function byCategories(warehouseId, q = {}) {
 }
 
 /** Brendlar kesimidagi qoldiq — alohida ko'rsatish */
-function byBrands(warehouseId, q = {}) {
+async function byBrands(warehouseId, q = {}) {
   const where = ['1=1'];
   const params = [];
   if (warehouseId) { where.push('b.warehouse_id = ?'); params.push(warehouseId); }
@@ -324,7 +324,7 @@ function byBrands(warehouseId, q = {}) {
 }
 
 /** Tovar -> qaysi ombor, qaysi zonada, qaysi qator/qavat/joyda */
-function productPlacement(productId) {
+async function productPlacement(productId) {
   return all(
     `SELECT b.warehouse_id, w.code AS warehouse_code,
             w.name_ru AS warehouse_ru, w.name_uz AS warehouse_uz,
@@ -345,16 +345,16 @@ function productPlacement(productId) {
 
 // ------------------------------------------------------------- Routes
 
-function register(router) {
+async function register(router) {
   // 2D xarita
-  router.get('/api/warehouse/map', (ctx) => {
+  router.get('/api/warehouse/map', async (ctx) => {
     const wh = Number(ctx.query.warehouse_id);
     if (!wh) throw bad('warehouse_id kerak / Требуется warehouse_id');
     return warehouseMap(wh, ctx.query);
   });
 
   // Skelet yaratish / yangilash
-  router.post('/api/warehouse/map/build', (ctx) => {
+  router.post('/api/warehouse/map/build', async (ctx) => {
     const b = ctx.body || {};
     const wh = Number(b.warehouse_id);
     if (!wh) throw bad('warehouse_id kerak / Требуется warehouse_id');
@@ -362,27 +362,27 @@ function register(router) {
   }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER'] });
 
   // Avtomatik joylash rejasi
-  router.get('/api/warehouse/auto-place', (ctx) => {
+  router.get('/api/warehouse/auto-place', async (ctx) => {
     const wh = Number(ctx.query.warehouse_id);
     if (!wh) throw bad('warehouse_id kerak / Требуется warehouse_id');
     return autoPlace(wh, ctx.query);
   });
 
   // Mahsulot joylashuvi
-  router.get('/api/warehouse/product-placement', (ctx) => {
+  router.get('/api/warehouse/product-placement', async (ctx) => {
     const pid = Number(ctx.query.product_id);
     if (!pid) throw bad('product_id kerak / Требуется product_id');
     return productPlacement(pid);
   });
 
   // Turlar / Brendlar
-  router.get('/api/warehouse/by-category', (ctx) =>
-    byCategories(Number(ctx.query.warehouse_id) || 0, ctx.query));
-  router.get('/api/warehouse/by-brand', (ctx) =>
-    byBrands(Number(ctx.query.warehouse_id) || 0, ctx.query));
+  router.get('/api/warehouse/by-category', async (ctx) =>
+    await byCategories(Number(ctx.query.warehouse_id) || 0, ctx.query));
+  router.get('/api/warehouse/by-brand', async (ctx) =>
+    await byBrands(Number(ctx.query.warehouse_id) || 0, ctx.query));
 
   // Qisqa: ombor bo'yicha barcha joylar (editor uchun select)
-  router.get('/api/warehouse/cells', (ctx) => {
+  router.get('/api/warehouse/cells',async (ctx) => {
     const wh = Number(ctx.query.warehouse_id);
     if (!wh) throw bad('warehouse_id kerak / Требуется warehouse_id');
     return all(

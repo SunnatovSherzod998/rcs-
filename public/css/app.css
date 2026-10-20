@@ -256,6 +256,18 @@ table.grid tr.row-ok { background: var(--ok-bg) !important; }
 .form-field input.invalid { border-color: var(--err); background: var(--err-bg); }
 .form-field .hint { font-size: 11.5px; color: var(--text-dim); margin-top: 3px; }
 .form-field .inline-add { margin-top: 5px; }
+
+/* -------------------------------------------------- PAROL TEKSHIRUVI */
+.pw-meter { margin-top: 6px; font-size: 11.5px; line-height: 1.45; }
+.pw-meter .pw-list { display: grid; gap: 1px; }
+.pw-meter .pw-item { display: flex; gap: 6px; color: var(--text-dim); }
+.pw-meter .pw-item .pw-ico { width: 11px; flex: 0 0 11px; text-align: center; font-weight: 700; }
+.pw-meter .pw-item.ok { color: var(--ok); }
+.pw-meter .pw-item.bad { color: var(--err); }
+.pw-meter .pw-item.bad .pw-txt { font-weight: 600; }
+.pw-meter .pw-status { margin-top: 5px; font-weight: 600; color: var(--text-dim); }
+.pw-meter .pw-status.ok { color: var(--ok); }
+.pw-meter .pw-status.bad { color: var(--err); }
 .form-check {
   display: flex; align-items: center; gap: 8px; padding: 7px 0 7px 2px; grid-column: span 1;
 }

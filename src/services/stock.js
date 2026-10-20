@@ -32,7 +32,7 @@ class BizError extends HttpError {
 
 // ---------------------------------------------------------------- helpers
 
-function getLines(docId) {
+async function getLines(docId) {
   return all('SELECT * FROM document_lines WHERE document_id = ? ORDER BY line_no, id', docId);
 }
 
@@ -41,8 +41,8 @@ function normLocation(locId) {
 }
 
 /** Balans kalitlari bo'yicha qoldiqni harakatlardan qayta hisoblaydi */
-function recalcKey(productId, warehouseId, locationId) {
-  const m = get(
+async function recalcKey(productId, warehouseId, locationId) {
+  const m = await get(
     `SELECT COALESCE(SUM(qty_in),0) AS qin, COALESCE(SUM(qty_out),0) AS qout,
             COALESCE(SUM(amount),0) AS amt, MAX(date) AS d
        FROM reg_stock_movements
@@ -53,9 +53,9 @@ function recalcKey(productId, warehouseId, locationId) {
   const amt = r2(m.amt || 0);
   const key = [productId, warehouseId, normLocation(locationId)];
   if (Math.abs(qty) < 1e-9 && Math.abs(amt) < 1e-6) {
-    run('DELETE FROM reg_stock_balances WHERE product_id=? AND warehouse_id=? AND location_id=?', ...key);
+    await run('DELETE FROM reg_stock_balances WHERE product_id=? AND warehouse_id=? AND location_id=?', ...key);
   } else {
-    run(
+    await run(
       `INSERT INTO reg_stock_balances (product_id, warehouse_id, location_id, qty, amount, last_date)
        VALUES (?,?,?,?,?,?)
        ON CONFLICT(product_id, warehouse_id, location_id)
@@ -70,17 +70,17 @@ function recalcKey(productId, warehouseId, locationId) {
 const r2 = (v) => Math.round((Number(v) || 0) * 100) / 100;
 
 /** Mahsulotning joriy o‘rtacha tannarxi (ombor bo‘yicha) */
-function avgCost(productId, warehouseId, prod) {
-  const pr = get('SELECT cost FROM reg_prices WHERE product_id=? AND warehouse_id=?', productId, warehouseId);
+async function avgCost(productId, warehouseId, prod) {
+  const pr = await get('SELECT cost FROM reg_prices WHERE product_id=? AND warehouse_id=?', productId, warehouseId);
   if (pr && pr.cost > 0) return pr.cost;
-  const p = prod || get('SELECT cost_price FROM catalog_products WHERE id=?', productId);
+  const p = prod || await get('SELECT cost_price FROM catalog_products WHERE id=?', productId);
   return p?.cost_price || 0;
 }
 
-function addMovement(m) {
+async function addMovement(m) {
   const qtyIn = r2(m.qty_in);
   const qtyOut = r2(m.qty_out);
-  run(
+  await run(
     `INSERT INTO reg_stock_movements
       (document_id, document_line_id, date, doc_type, product_id, warehouse_id,
        location_id, qty_in, qty_out, price, amount, counterparty_id)
@@ -89,11 +89,11 @@ function addMovement(m) {
     normLocation(m.location_id), qtyIn, qtyOut, r2(m.price), r2(m.amount),
     m.counterparty_id ?? null
   );
-  recalcKey(m.product_id, m.warehouse_id, m.location_id);
+  await recalcKey(m.product_id, m.warehouse_id, m.location_id);
 }
 
-function addDebt(m) {
-  run(
+async function addDebt(m) {
+  await run(
     `INSERT INTO reg_debt_movements (document_id, date, counterparty_id, warehouse_id, amount, note)
      VALUES (?,?,?,?,?,?)`,
     m.document_id, m.date, m.counterparty_id, m.warehouse_id ?? null, m.amount || 0, m.note ?? null
@@ -101,15 +101,15 @@ function addDebt(m) {
 }
 
 /** Mahsulotning ombor bo'yicha joriy qoldig'i */
-function qtyOnHand(productId, warehouseId, locationId = null) {
+async function qtyOnHand(productId, warehouseId, locationId = null) {
   if (locationId === null || locationId === undefined) {
-    const r = get(
+    const r = await get(
       'SELECT COALESCE(SUM(qty),0) AS q FROM reg_stock_balances WHERE product_id=? AND warehouse_id=?',
       productId, warehouseId
     );
     return r.q || 0;
   }
-  const r = get(
+  const r = await get(
     'SELECT qty FROM reg_stock_balances WHERE product_id=? AND warehouse_id=? AND location_id=?',
     productId, warehouseId, normLocation(locationId)
   );
@@ -117,25 +117,25 @@ function qtyOnHand(productId, warehouseId, locationId = null) {
 }
 
 /** Omborning manfiy qoldiqga ruxsat berish qoidasi */
-function allowNegative(warehouseId) {
-  const w = get('SELECT is_negative_allowed FROM catalog_warehouses WHERE id = ?', warehouseId);
+async function allowNegative(warehouseId) {
+  const w = await get('SELECT is_negative_allowed FROM catalog_warehouses WHERE id = ?', warehouseId);
   return !!(w && w.is_negative_allowed);
 }
 
 /** Chiqim qilingan miqdorni tekshiradi (manfiy qoldiq nazorati) */
-function checkNegative(lines, warehouseId) {
-  if (allowNegative(warehouseId)) return;
-  const w = get('SELECT is_negative_allowed FROM catalog_warehouses WHERE id=?', warehouseId);
+async function checkNegative(lines, warehouseId) {
+  if (await allowNegative(warehouseId)) return;
+  const w = await get('SELECT is_negative_allowed FROM catalog_warehouses WHERE id=?', warehouseId);
   if (w && w.is_negative_allowed) return;
   const problems = [];
   const byProduct = new Map();
   for (const l of lines) {
-    const cur = byProduct.get(l.product_id) ?? qtyOnHand(l.product_id, warehouseId);
+    const cur = byProduct.get(l.product_id) ?? await qtyOnHand(l.product_id, warehouseId);
     byProduct.set(l.product_id, cur - (l.qty || 0));
   }
   for (const [pid, left] of byProduct) {
     if (left < -1e-9) {
-      const p = get('SELECT sku, name_ru FROM catalog_products WHERE id=?', pid);
+      const p = await get('SELECT sku, name_ru FROM catalog_products WHERE id=?', pid);
       problems.push(`${p ? p.sku + ' ' + p.name_ru : '#' + pid} → qoldiq ${left}`);
     }
   }
@@ -154,26 +154,30 @@ function checkNegative(lines, warehouseId) {
  *   2) joriy foydalanuvchiga bog'langan xodim (users.employee_id)
  *   3) kassir bo'lmasa — oxirgi xodim (POS uchun qulaylik)
  */
-function employeeOf(data, user) {
+async function employeeOf(data, user) {
   if (data.employee_id) return Number(data.employee_id);
   if (user?.employee_id) return Number(user.employee_id);
   // POS/kassa: rol bo'yicha xodimni avtomatik tanlash
-  const roleEmp = get(
+  const roleEmp = await get(
     `SELECT e.id FROM catalog_employees e
       JOIN users u ON u.employee_id = e.id
      WHERE u.id = ?`, user?.id ?? 0
   );
   if (roleEmp) return roleEmp.id;
-  const last = get(`SELECT id FROM catalog_employees WHERE is_active = 1 ORDER BY id LIMIT 1`);
-  return last ? last.id : null;
+  const last = await get(`SELECT id FROM catalog_employees WHERE is_active = 1 ORDER BY id LIMIT 1`);
+  const v = last ? Number(last.id) : null;
+  if (v === null || Number.isNaN(v)) {
+    console.error('[DEBUG] employeeOf -> ', { last, user: user && { id: user.id, employee_id: user.employee_id } });
+  }
+  return v;
 }
 
-function recalcTotals(docId) {
-  const doc = get('SELECT * FROM documents WHERE id=?', docId);
-  const lines = getLines(docId);
+async function recalcTotals(docId) {
+  const doc = await get('SELECT * FROM documents WHERE id=?', docId);
+  const lines = await getLines(docId);
   let totalQty = 0, totalAmount = 0, totalCost = 0;
   for (const l of lines) {
-    const p = get('SELECT cost_price, is_service FROM catalog_products WHERE id=?', l.product_id);
+    const p = await get('SELECT cost_price, is_service FROM catalog_products WHERE id=?', l.product_id);
     const isInv = doc.type === 'INVENTORY';
     const sysQty = isInv ? (l.qty_system ?? 0) : 0;
     const effQty = isInv ? (l.qty - sysQty) : (l.qty || 0);
@@ -182,7 +186,7 @@ function recalcTotals(docId) {
     totalAmount += (l.amount || 0) * (isInv ? sign : 1);
     if (!isInv) totalCost += (l.qty || 0) * ((p?.cost_price) || 0);
   }
-  run(
+  await run(
     'UPDATE documents SET total_qty=?, total_amount=?, total_cost=? WHERE id=?',
     totalQty, totalAmount, totalCost, docId
   );
@@ -190,13 +194,13 @@ function recalcTotals(docId) {
 }
 
 /** Hujjatni o'tkazish (провести) */
-function post(docId, user) {
-  return tx(() => {
-    const doc = get('SELECT * FROM documents WHERE id=?', docId);
+async function post(docId, user) {
+  return tx(async () => {
+    const doc = await get('SELECT * FROM documents WHERE id=?', docId);
     if (!doc) throw new BizError('Hujjat topilmadi / Документ не найден');
     if (doc.status === 'POSTED') throw new BizError('Hujjat allaqachon o‘tkazilgan / Документ уже проведён');
 
-    const lines = getLines(docId);
+    const lines = await getLines(docId);
     if (!lines.length) throw new BizError('Hujjat bo‘sh / Документ пуст');
 
     if (doc.type !== 'TRANSFER' && !doc.warehouse_id) {
@@ -211,15 +215,15 @@ function post(docId, user) {
 
     // 1) Chiqim / ko'chirishda manfiy qoldiqni tekshirish
     if (doc.type === 'ISSUE' || doc.type === 'TRANSFER') {
-      checkNegative(lines, doc.warehouse_id);
+      await checkNegative(lines, doc.warehouse_id);
     }
     // 1b) PICK: katakda yetarli tovar borligini tekshirish
     if (doc.type === 'PICK') {
       for (const l of lines) {
         if (!l.location_id) throw new BizError('Pick uchun joy (katak) ko‘rsatilishi shart / Для выборки указано место (ячейку)');
-        const have = qtyOnHand(l.product_id, doc.warehouse_id, l.location_id);
+        const have = await qtyOnHand(l.product_id, doc.warehouse_id, l.location_id);
         if ((l.qty || 0) - have > 1e-9) {
-          const p = get('SELECT sku, name_ru FROM catalog_products WHERE id=?', l.product_id);
+          const p = await get('SELECT sku, name_ru FROM catalog_products WHERE id=?', l.product_id);
           throw new BizError(
             `Katakda yetarli emas: ${p ? p.sku + ' ' + p.name_ru : '#' + l.product_id} — ` +
             `mavjud ${have}, so‘ralgan ${l.qty} / В ячейке недостаточно: ${have} из ${l.qty}`
@@ -231,9 +235,9 @@ function post(docId, user) {
     if (doc.type === 'PLACEMENT') {
       for (const l of lines) {
         if (!l.location_id) throw new BizError('Joylash uchun katak ko‘rsatilishi shart / Для размещения указана ячейка');
-        const have = qtyOnHand(l.product_id, doc.warehouse_id, 0);
+        const have = await qtyOnHand(l.product_id, doc.warehouse_id, 0);
         if ((l.qty || 0) - have > 1e-9) {
-          const p = get('SELECT sku, name_ru FROM catalog_products WHERE id=?', l.product_id);
+          const p = await get('SELECT sku, name_ru FROM catalog_products WHERE id=?', l.product_id);
           throw new BizError(
             `Joylash uchun yetarli yo‘q: ${p ? p.sku + ' ' + p.name_ru : '#' + l.product_id} — ` +
             `mavjud ${have}, kerak ${l.qty} / Недостаточно для размещения: ${have} из ${l.qty}`
@@ -246,7 +250,7 @@ function post(docId, user) {
     const isInv = doc.type === 'INVENTORY';
 
     for (const l of lines) {
-      const prod = get('SELECT * FROM catalog_products WHERE id=?', l.product_id);
+      const prod = await get('SELECT * FROM catalog_products WHERE id=?', l.product_id);
       if (!prod) throw new BizError(`Tovar #${l.product_id} topilmadi`);
 
       if (isInv) {
@@ -256,7 +260,7 @@ function post(docId, user) {
         const diff = fact - sys;
         if (Math.abs(diff) < 1e-9) continue;
         const price = l.price || prod.cost_price || 0;
-        addMovement({
+        await addMovement({
           document_id: docId, line_id: l.id, date, doc_type: doc.type,
           product_id: l.product_id, warehouse_id: doc.warehouse_id, location_id: l.location_id,
           qty_in: diff > 0 ? diff : 0,
@@ -264,12 +268,12 @@ function post(docId, user) {
           price, amount: diff * price,
           counterparty_id: doc.counterparty_id,
         });
-        recalcTotals(docId);
+        await recalcTotals(docId);
       } else {
         switch (doc.type) {
           case 'OPENING':
           case 'RECEIPT':
-            addMovement({
+            await addMovement({
               document_id: docId, line_id: l.id, date, doc_type: doc.type,
               product_id: l.product_id, warehouse_id: doc.warehouse_id, location_id: l.location_id,
               qty_in: l.qty || 0, qty_out: 0,
@@ -279,7 +283,7 @@ function post(docId, user) {
             break;
 
           case 'ISSUE':
-            addMovement({
+            await addMovement({
               document_id: docId, line_id: l.id, date, doc_type: doc.type,
               product_id: l.product_id, warehouse_id: doc.warehouse_id, location_id: l.location_id,
               qty_in: 0, qty_out: l.qty || 0,
@@ -289,14 +293,14 @@ function post(docId, user) {
             break;
 
           case 'TRANSFER':
-            addMovement({
+            await addMovement({
               document_id: docId, line_id: l.id, date, doc_type: doc.type,
               product_id: l.product_id, warehouse_id: doc.warehouse_id, location_id: l.location_id,
               qty_in: 0, qty_out: l.qty || 0,
               price: l.price, amount: 0,
               counterparty_id: doc.counterparty_id,
             });
-            addMovement({
+            await addMovement({
               document_id: docId, line_id: l.id, date, doc_type: doc.type,
               product_id: l.product_id, warehouse_id: doc.dest_warehouse_id, location_id: l.dest_location_id ?? null,
               qty_in: l.qty || 0, qty_out: 0,
@@ -308,15 +312,15 @@ function post(docId, user) {
           case 'PLACEMENT': {
             // Размещение: umumiy qoldiq (location 0) -> aniq katak
             // Qiymat ishorasi: chiqimda manfiy, kirishda musbat (ombor jami o'zgarmaydi)
-            const c = avgCost(l.product_id, doc.warehouse_id, prod);
+            const c = await avgCost(l.product_id, doc.warehouse_id, prod);
             const val = r2((l.qty || 0) * c);
-            addMovement({
+            await addMovement({
               document_id: docId, line_id: l.id, date, doc_type: doc.type,
               product_id: l.product_id, warehouse_id: doc.warehouse_id, location_id: 0,
               qty_in: 0, qty_out: l.qty || 0,
               price: c, amount: -val, counterparty_id: doc.counterparty_id,
             });
-            addMovement({
+            await addMovement({
               document_id: docId, line_id: l.id, date, doc_type: doc.type,
               product_id: l.product_id, warehouse_id: doc.warehouse_id, location_id: l.location_id,
               qty_in: l.qty || 0, qty_out: 0,
@@ -327,15 +331,15 @@ function post(docId, user) {
 
           case 'PICK': {
             // Выборка: katak -> umumiy qoldiq
-            const c = avgCost(l.product_id, doc.warehouse_id, prod);
+            const c = await avgCost(l.product_id, doc.warehouse_id, prod);
             const val = r2((l.qty || 0) * c);
-            addMovement({
+            await addMovement({
               document_id: docId, line_id: l.id, date, doc_type: doc.type,
               product_id: l.product_id, warehouse_id: doc.warehouse_id, location_id: l.location_id,
               qty_in: 0, qty_out: l.qty || 0,
               price: c, amount: -val, counterparty_id: doc.counterparty_id,
             });
-            addMovement({
+            await addMovement({
               document_id: docId, line_id: l.id, date, doc_type: doc.type,
               product_id: l.product_id, warehouse_id: doc.warehouse_id, location_id: 0,
               qty_in: l.qty || 0, qty_out: 0,
@@ -354,7 +358,7 @@ function post(docId, user) {
 
       // orta tannarx registrini yangilash
       if (doc.type === 'RECEIPT' || doc.type === 'OPENING' || doc.type === 'INVENTORY') {
-        const cur = get(
+        const cur = await get(
           'SELECT qty, amount FROM reg_stock_balances WHERE product_id=? AND warehouse_id=? AND location_id=0',
           l.product_id, doc.warehouse_id
         );
@@ -364,7 +368,7 @@ function post(docId, user) {
         const newQty = oldQty + addQty;
         const newAmt = oldAmt + addAmt;
         const avg = newQty > 1e-9 ? newAmt / newQty : (l.price || prod.cost_price || 0);
-        run(
+        await run(
           `INSERT INTO reg_prices (product_id, warehouse_id, cost, updated_at)
            VALUES (?,?,?, datetime('now','localtime'))
            ON CONFLICT(product_id, warehouse_id) DO UPDATE SET cost=excluded.cost, updated_at=excluded.updated_at`,
@@ -377,29 +381,32 @@ function post(docId, user) {
     //    + = bizning qarzimiz (kontragent yetkazib beruvchi / biz to‘lagan)
     //    - = ularning qarzi (kontragent mijoz / biz to‘lagan)
     if (doc.counterparty_id) {
+      // Jami summa `recalcTotals` da yangilanadi — shuning uchun yangilaymiz
+      const totals = await recalcTotals(docId);
+      const totalAmount = totals.total_amount || 0;
       let amount = 0;
       switch (doc.type) {
         case 'RECEIPT':
         case 'OPENING':
-          amount = doc.total_amount || 0;                 // biz tovar oldik -> qarzimiz
+          amount = totalAmount;                            // biz tovar oldik -> qarzimiz
           break;
         case 'ISSUE':
           if ((doc.base_type || 'SALE') === 'SALE') {
-            amount = -(doc.total_amount || 0);            // mijozga sotdik -> ularning qarzi
+            amount = -totalAmount;                         // mijozga sotdik -> ularning qarzi
           }
           break;
         case 'PAYMENT':
           // base_type: 'IN' — mijozdan pul oldik (qarz kamayadi)
           //            'OUT' — yetkazib beruvchiga to'ladik (qarz kamayadi)
           amount = (doc.base_type || 'IN') === 'OUT'
-            ? (doc.total_amount || 0)
-            : -(doc.total_amount || 0);
+            ? totalAmount
+            : -totalAmount;
           break;
         default:
           amount = 0;
       }
       if (Math.abs(amount) > 1e-9) {
-        addDebt({
+        await addDebt({
           document_id: docId, date, counterparty_id: doc.counterparty_id,
           warehouse_id: doc.warehouse_id, amount,
           note: doc.reason || doc.note || null,
@@ -407,82 +414,83 @@ function post(docId, user) {
       }
     }
 
-    const t = recalcTotals(docId);
-    run(
+    const t = await recalcTotals(docId);
+    await run(
       "UPDATE documents SET status='POSTED', posted_at=datetime('now','localtime'), posted_by=? WHERE id=?",
       user?.id ?? null, docId
     );
 
-    // Ishchi bonusi (limitdan oshgan sotuv uchun)
-    const bonusInfo = salary.applyBonus(t);
+    // Ishchi bonusi (limitdan oshgan sotuv uchun) — status POSTED bo'lgandan keyin
+    const posted = await get('SELECT * FROM documents WHERE id=?', docId);
+    const bonusInfo = await salary.applyBonus(posted);
 
-    return { ok: true, document: t, status: 'POSTED', bonus: bonusInfo };
+    return { ok: true, document: posted, status: 'POSTED', bonus: bonusInfo };
   });
 }
 
 /** O'tkazishni bekor qilish (отмена проведения) */
-function unpost(docId, user) {
-  return tx(() => {
-    const doc = get('SELECT * FROM documents WHERE id=?', docId);
+async function unpost(docId, user) {
+  return tx(async () => {
+    const doc = await get('SELECT * FROM documents WHERE id=?', docId);
     if (!doc) throw new BizError('Hujjat topilmadi / Документ не найден');
     if (doc.status !== 'POSTED') throw new BizError('Hujjat o‘tkazilmagan / Документ не проведён');
 
     // qaysi kalitlarni qayta hisoblash kerak
-    const affected = all(
+    const affected = await all(
       `SELECT DISTINCT product_id, warehouse_id, COALESCE(location_id,0) AS location_id
          FROM reg_stock_movements WHERE document_id=?`,
       docId
     );
-    run('DELETE FROM reg_stock_movements WHERE document_id=?', docId);
-    run('DELETE FROM reg_debt_movements WHERE document_id=?', docId);
-    for (const a of affected) recalcKey(a.product_id, a.warehouse_id, a.location_id);
+    await run('DELETE FROM reg_stock_movements WHERE document_id=?', docId);
+    await run('DELETE FROM reg_debt_movements WHERE document_id=?', docId);
+    for (const a of affected) await recalcKey(a.product_id, a.warehouse_id, a.location_id);
 
-    run(
+    await run(
       "UPDATE documents SET status='DRAFT', posted_at=NULL, posted_by=NULL WHERE id=?",
       docId
     );
     // Ishchi bonusini o'chirish (agar edi)
-    const bonusInfo = salary.applyBonus(doc, true);
-    return { ok: true, document: get('SELECT * FROM documents WHERE id=?', docId), status: 'DRAFT', bonus_removed: bonusInfo };
+    const bonusInfo = await salary.applyBonus(doc, true);
+    return { ok: true, document: await get('SELECT * FROM documents WHERE id=?', docId), status: 'DRAFT', bonus_removed: bonusInfo };
   });
 }
 
 /** Yangi hujjat yaratish */
-function createDocument(data, user) {
+async function createDocument(data, user) {
   const type = String(data.type || '').toUpperCase();
   if (!DOC_TYPES.includes(type)) throw new BizError('Noma’lum hujjat turi: ' + type);
 
-  return tx(() => {
-    const number = nextNumber('doc_' + type);
+  return tx(async () => {
+    const number = await nextNumber('doc_' + type);
     const date = data.date || new Date().toISOString().slice(0, 10);
     let currencyId = data.currency_id ?? null;
     let rate = data.rate ?? 1;
     if (!currencyId) {
-      const base = get("SELECT id FROM catalog_currencies WHERE code='UZS'");
+      const base = await get("SELECT id FROM catalog_currencies WHERE code='UZS'");
       currencyId = base?.id ?? null;
     }
 
-    const res = run(
+    const res = await run(
       `INSERT INTO documents
         (type, number, date, status, warehouse_id, dest_warehouse_id, counterparty_id,
          employee_id, currency_id, rate, reason, base_type, note)
        VALUES (?,?,?, 'DRAFT', ?,?,?,?,?,?,?,?,?)`,
       type, number, date,
       data.warehouse_id ?? null, data.dest_warehouse_id ?? null, data.counterparty_id ?? null,
-      employeeOf(data, user), currencyId, rate, data.reason ?? null,
+      await employeeOf(data, user), currencyId, rate, data.reason ?? null,
       data.base_type ?? null, data.note ?? null
     );
     const docId = Number(res.lastInsertRowid);
-    replaceLines(docId, data.lines || []);
-    recalcTotals(docId);
-    return { ok: true, document: get('SELECT * FROM documents WHERE id=?', docId) };
+    await replaceLines(docId, data.lines || []);
+    await recalcTotals(docId);
+    return { ok: true, document: await get('SELECT * FROM documents WHERE id=?', docId) };
   });
 }
 
-function replaceLines(docId, lines) {
-  const doc = get('SELECT * FROM documents WHERE id=?', docId);
+async function replaceLines(docId, lines) {
+  const doc = await get('SELECT * FROM documents WHERE id=?', docId);
   if (doc.status === 'POSTED') throw new BizError('O‘tkazilgan hujjatni tahrirlab bo‘lmaydi / Проведённый документ нельзя изменить');
-  run('DELETE FROM document_lines WHERE document_id=?', docId);
+  await run('DELETE FROM document_lines WHERE document_id=?', docId);
   let no = 0;
   for (const l of lines) {
     if (!l.product_id) continue;
@@ -490,7 +498,7 @@ function replaceLines(docId, lines) {
     const price = Number(l.price || 0);
     const discount = Math.min(100, Math.max(0, Number(l.discount || 0)));
     const amount = r2(qty * price * (1 - discount / 100));
-    run(
+    await run(
       `INSERT INTO document_lines (document_id, line_no, product_id, location_id, dest_location_id, qty, price, amount, discount, qty_system, note)
        VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
       docId, ++no, l.product_id, l.location_id ?? null, l.dest_location_id ?? null, qty, price, amount, discount,
@@ -501,12 +509,12 @@ function replaceLines(docId, lines) {
   return no;
 }
 
-function updateDocument(id, data) {
-  return tx(() => {
-    const doc = get('SELECT * FROM documents WHERE id=?', id);
+async function updateDocument(id, data) {
+  return tx(async () => {
+    const doc = await get('SELECT * FROM documents WHERE id=?', id);
     if (!doc) throw new BizError('Hujjat topilmadi / Документ не найден');
     if (doc.status === 'POSTED') throw new BizError('O‘tkazilgan hujjatni tahrirlab bo‘lmaydi / Проведённый документ нельзя изменить');
-    run(
+    await run(
       `UPDATE documents SET date=?, warehouse_id=?, dest_warehouse_id=?, counterparty_id=?,
         employee_id=?, currency_id=?, rate=?, reason=?, base_type=?, note=? WHERE id=?`,
       data.date ?? doc.date,
@@ -521,24 +529,24 @@ function updateDocument(id, data) {
       data.note ?? doc.note,
       id
     );
-    if (Array.isArray(data.lines)) replaceLines(id, data.lines);
-    recalcTotals(id);
-    return { ok: true, document: get('SELECT * FROM documents WHERE id=?', id) };
+    if (Array.isArray(data.lines)) await replaceLines(id, data.lines);
+    await recalcTotals(id);
+    return { ok: true, document: await get('SELECT * FROM documents WHERE id=?', id) };
   });
 }
 
-function deleteDocument(id) {
-  return tx(() => {
-    const doc = get('SELECT * FROM documents WHERE id=?', id);
+async function deleteDocument(id) {
+  return tx(async () => {
+    const doc = await get('SELECT * FROM documents WHERE id=?', id);
     if (!doc) throw new BizError('Hujjat topilmadi / Документ не найден');
     if (doc.status === 'POSTED') throw new BizError('Avval o‘tkazishni bekor qiling / Сначала отмените проведение');
-    run('DELETE FROM documents WHERE id=?', id);
+    await run('DELETE FROM documents WHERE id=?', id);
     return { ok: true, deleted: id };
   });
 }
 
-function getDocument(id) {
-  const doc = get(
+async function getDocument(id) {
+  const doc = await get(
     `SELECT d.*,
             w.name_ru AS warehouse_name_ru, w.name_uz AS warehouse_name_uz,
             w2.name_ru AS dest_warehouse_name_ru, w2.name_uz AS dest_warehouse_name_uz,
@@ -555,7 +563,7 @@ function getDocument(id) {
     id
   );
   if (!doc) return null;
-  doc.lines = all(
+  doc.lines = await all(
     `SELECT l.*, p.sku, p.name_ru, p.name_uz, u.code AS unit_code, u.name_ru AS unit_ru,
             loc.code AS location_code,
             COALESCE(b.qty, 0) AS qty_on_hand

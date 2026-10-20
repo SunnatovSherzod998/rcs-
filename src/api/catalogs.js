@@ -7,6 +7,7 @@
 const { all, get, run, buildWhere, tx } = require('../db');
 const { bad, notFound, forbidden } = require('../lib/http');
 const { hashPassword } = require('../lib/crypto');
+const { assertPassword } = require('../lib/password');
 
 /** maydon turi: text | textarea | number | money | int | bool | select | date | ref */
 const ROOM_KIND_OPTIONS = [
@@ -170,12 +171,12 @@ const CATALOGS = {
       { name: 'is_active', type: 'bool', label: { uz: 'Faol', ru: 'Активен' } },
     ],
     // yangi joy har doim xonaga bog'lanadi; eski "xonasiz" joylar tahrirlanadi
-    validate(data, { isNew, row }) {
+    async validate(data, { isNew, row }) {
       if (!isNew && data.room_id === undefined) return;   // qisman yangilash
       if (data.room_id === null || data.room_id === undefined) {
         throw bad('Xona tanlang (omborni tanlang yoki «＋ Ombor yaratish») / Выберите комнату (выберите склад или «＋ Создать склад»)', 'REQUIRED');
       }
-      const room = get('SELECT id, warehouse_id FROM catalog_rooms WHERE id=?', Number(data.room_id));
+      const room = await get('SELECT id, warehouse_id FROM catalog_rooms WHERE id=?', Number(data.room_id));
       if (!room) throw bad('Xona topilmadi / Комната не найдена');
       const whId = data.warehouse_id ?? row?.warehouse_id;
       if (whId != null && Number(room.warehouse_id) !== Number(whId)) {
@@ -316,7 +317,7 @@ function getCatalog(cat) {
   return c;
 }
 
-function list(cat, query) {
+async function list(cat, query) {
   const c = getCatalog(cat);
   const limit = Math.min(Number(query.limit) || 200, 5000);
   const offset = Number(query.offset) || 0;
@@ -338,11 +339,11 @@ function list(cat, query) {
   const fw = buildWhere(query.filters && typeof query.filters === 'object' ? query.filters : {}, allowed);
   if (fw.clause) { where = where ? where + ' AND ' + fw.clause.slice(6) : fw.clause; params.push(...fw.params); }
 
-  const rows = all(
+  const rows = await all(
     `SELECT t.* FROM ${c.table} t ${where} ORDER BY ${c.order} LIMIT ? OFFSET ?`,
     ...params, limit, offset
   );
-  const cnt = get(`SELECT COUNT(*) AS c FROM ${c.table} t ${where}`, ...params);
+  const cnt = await get(`SELECT COUNT(*) AS c FROM ${c.table} t ${where}`, ...params);
   return { rows, total: cnt.c, limit, offset };
 }
 
@@ -378,16 +379,17 @@ function pick(cat, body, opt = {}) {
  * Xodim qo'shilsa — bir vaqtning o'zida foydalanuvchi akkaunti ham yaratiladi.
  * body.user = { login, password, role, warehouse_id }
  */
-function createEmployeeUser(empId, userData) {
+async function createEmployeeUser(empId, userData) {
   const login = String(userData.login || '').trim();
-  const password = String(userData.password || '').trim();
+  const password = String(userData.password ?? '');
   if (!login || !password) return null;              // akkaunt yaratilmadi
 
-  if (get('SELECT id FROM users WHERE lower(login)=lower(?)', login)) {
+  await assertPassword(password);
+  if (await get('SELECT id FROM users WHERE lower(login)=lower(?)', login)) {
     throw bad(`Login "${login}" band / Логин "${login}" уже занят`);
   }
   const { hash, salt } = hashPassword(password);
-  run(
+  await run(
     `INSERT INTO users (login, password_hash, salt, full_name, role, warehouse_id, employee_id, is_active)
      VALUES (?,?,?,?,?,?,?,1)`,
     login, hash, salt, userData.full_name || login,
@@ -396,22 +398,28 @@ function createEmployeeUser(empId, userData) {
   return get('SELECT id, login, role FROM users WHERE lower(login)=lower(?)', login);
 }
 
-function create(cat, body) {
+async function create(cat, body) {
   const c = getCatalog(cat);
   const data = pick(cat, body);
   c.validate?.(data, { isNew: true, row: null });
+
+  // Xodim + akkaunt: parol siyosatini yozishdan OLDIN tekshiramiz
+  if (cat === 'employees' && body.user && body.user.password) {
+    await assertPassword(body.user.password);
+  }
+
   const cols = Object.keys(data);
   if (!cols.length) throw bad('Hech narsa yuborilmadi / Нет данных');
-  const res = run(
+  const res = await run(
     `INSERT INTO ${c.table} (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`,
     ...cols.map((k) => data[k])
   );
   const id = Number(res.lastInsertRowid);
-  const row = get(`SELECT * FROM ${c.table} WHERE id=?`, id);
+  const row = await get(`SELECT * FROM ${c.table} WHERE id=?`, id);
 
   // Xodim + foydalanuvchi akkaunti (bir shaklda)
   if (cat === 'employees' && body.user) {
-    row.created_user = createEmployeeUser(id, {
+    row.created_user = await createEmployeeUser(id, {
       ...body.user,
       full_name: data.name_uz || data.name_ru,
       warehouse_id: body.user.warehouse_id || data.warehouse_id,
@@ -420,29 +428,29 @@ function create(cat, body) {
   return row;
 }
 
-function update(cat, id, body) {
+async function update(cat, id, body) {
   const c = getCatalog(cat);
-  const row = get(`SELECT * FROM ${c.table} WHERE id=?`, id);
+  const row = await get(`SELECT * FROM ${c.table} WHERE id=?`, id);
   if (!row) throw notFound();
   // faqat yuborilgan maydonlarni yangilash (qisman yangilash / PATCH)
   const data = pick(cat, body, { partial: true });
   c.validate?.(data, { isNew: false, row });
   const cols = Object.keys(data);
   if (!cols.length) return row;
-  run(
+  await run(
     `UPDATE ${c.table} SET ${cols.map((k) => `${k}=?`).join(',')} WHERE id=?`,
     ...cols.map((k) => data[k]), id
   );
   return get(`SELECT * FROM ${c.table} WHERE id=?`, id);
 }
 
-function remove(cat, id) {
+async function remove(cat, id) {
   const c = getCatalog(cat);
   if (c.noDelete) {
     throw bad('Bu katalog «Bino rejasi» orqali o‘chiriladi / Удаление через «План здания»');
   }
   try {
-    run(`DELETE FROM ${c.table} WHERE id=?`, id);
+    await run(`DELETE FROM ${c.table} WHERE id=?`, id);
   } catch (e) {
     throw bad('O‘chirib bo‘lmaydi — hujjatlarda ishlatilgan / Нельзя удалить: используется в документах');
   }
@@ -450,7 +458,7 @@ function remove(cat, id) {
 }
 
 /** Katalog uchun qisqa ro'yxat (dropdown / select uchun) */
-function options(cat, query = {}) {
+async function options(cat, query = {}) {
   const c = getCatalog(cat);
   const limit = Math.min(Number(query.limit) || 500, 5000);
   const where = query.warehouse_id ? 'WHERE warehouse_id = ?' : '';
@@ -459,7 +467,7 @@ function options(cat, query = {}) {
   const keyCol = c.table === 'catalog_products' ? 'sku' : 'code';
   // kaskadli (dependsOn) maydonlar uchun tegishlik ustuni ham kerak
   const extra = ['catalog_locations', 'catalog_rooms'].includes(c.table) ? ', warehouse_id' : '';
-  const rows = all(
+  const rows = await all(
     `SELECT id, ${keyCol} AS code, name_uz, name_ru, is_active${extra}
        FROM ${c.table} ${where} ORDER BY ${c.order} LIMIT ?`,
     ...params, limit
@@ -467,8 +475,8 @@ function options(cat, query = {}) {
   return rows;
 }
 
-function register(router) {
-  router.get('/api/catalogs', () => {
+async function register(router) {
+  router.get('/api/catalogs', async () => {
     const out = {};
     for (const [k, v] of Object.entries(CATALOGS)) {
       out[k] = { table: v.table, label: v.label, fields: v.fields, search: v.search, ref: v.ref || null, tree: !!v.tree };
@@ -476,11 +484,11 @@ function register(router) {
     return out;
   });
 
-  router.get('/api/catalogs/:cat/options', (ctx) => options(ctx.params.cat, ctx.query));
-  router.get('/api/catalogs/:cat', (ctx) => list(ctx.params.cat, ctx.query));
-  router.get('/api/catalogs/:cat/:id', (ctx) => {
+  router.get('/api/catalogs/:cat/options', async (ctx) => await options(ctx.params.cat, ctx.query));
+  router.get('/api/catalogs/:cat', async (ctx) => await list(ctx.params.cat, ctx.query));
+  router.get('/api/catalogs/:cat/:id',async (ctx) => {
     const c = getCatalog(ctx.params.cat);
-    const row = get(`SELECT * FROM ${c.table} WHERE id=?`, Number(ctx.params.id));
+    const row = await get(`SELECT * FROM ${c.table} WHERE id=?`, Number(ctx.params.id));
     if (!row) throw notFound();
     return row;
   });
@@ -493,21 +501,22 @@ function register(router) {
       }
       return;
     }
-    const perms = ctx.user?._perms || [];
+    const perms = ctx.user?._perms
+      || (ctx.user?.role === 'ADMIN' ? ['*'] : (ctx.user?.role === 'WAREHOUSE_MANAGER' ? ['catalogs.write'] : []));
     if (!(perms.includes('*') || perms.includes('catalogs.write'))) {
       throw forbidden('Bu amal uchun huquqingiz yo‘q / Недостаточно прав');
     }
   }
 
-  router.post('/api/catalogs/:cat', (ctx) => {
+  router.post('/api/catalogs/:cat', async (ctx) => {
     requireWrite(ctx, ctx.params.cat);
     return create(ctx.params.cat, ctx.body);
   });
-  router.put('/api/catalogs/:cat/:id', (ctx) => {
+  router.put('/api/catalogs/:cat/:id', async (ctx) => {
     requireWrite(ctx, ctx.params.cat);
     return update(ctx.params.cat, Number(ctx.params.id), ctx.body);
   });
-  router.del('/api/catalogs/:cat/:id', (ctx) => {
+  router.del('/api/catalogs/:cat/:id', async (ctx) => {
     requireWrite(ctx, ctx.params.cat);
     return remove(ctx.params.cat, Number(ctx.params.id));
   });

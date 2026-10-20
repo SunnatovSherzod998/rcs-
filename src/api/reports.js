@@ -13,24 +13,24 @@ function period(query) {
   return { from, to };
 }
 
-function register(router) {
+async function register(router) {
   // ---------------------------------------------------------- Dashboard
-  router.get('/api/reports/dashboard', (ctx) => {
+  router.get('/api/reports/dashboard',async (ctx) => {
     const wh = Number(ctx.query.warehouse_id) || 0;
     const whClause = wh ? 'AND warehouse_id = ?' : '';
     const whArgs = wh ? [wh] : [];
 
-    const totals = get(
+    const totals = await get(
       `SELECT COUNT(*) AS positions, COALESCE(SUM(qty),0) AS qty, COALESCE(SUM(amount),0) AS amount
          FROM reg_stock_balances WHERE 1=1 ${wh ? 'AND warehouse_id = ?' : ''}`, ...whArgs
     );
-    const products = get(
+    const products = await get(
       `SELECT COUNT(*) AS c FROM catalog_products WHERE is_active = 1 AND is_service = 0`
     );
-    const warehouses = get(`SELECT COUNT(*) AS c FROM catalog_warehouses WHERE is_active = 1`);
-    const counterparties = get(`SELECT COUNT(*) AS c FROM catalog_counterparties WHERE is_active = 1`);
-    const drafts = get(`SELECT COUNT(*) AS c FROM documents WHERE status = 'DRAFT'`);
-    const belowMin = all(
+    const warehouses = await get(`SELECT COUNT(*) AS c FROM catalog_warehouses WHERE is_active = 1`);
+    const counterparties = await get(`SELECT COUNT(*) AS c FROM catalog_counterparties WHERE is_active = 1`);
+    const drafts = await get(`SELECT COUNT(*) AS c FROM documents WHERE status = 'DRAFT'`);
+    const belowMin = await all(
       `SELECT p.id, p.sku, p.name_ru, p.name_uz, p.min_stock, u.code AS unit,
               COALESCE((SELECT SUM(b.qty) FROM reg_stock_balances b
                          WHERE b.product_id = p.id ${wh ? 'AND b.warehouse_id = ?' : ''}), 0) AS qty
@@ -43,13 +43,13 @@ function register(router) {
                   WHERE b.product_id = p.id ${wh ? 'AND b.warehouse_id = ?' : ''}), 0)) DESC LIMIT 15`,
       ...whArgs
     );
-    const debt = get(`SELECT COALESCE(SUM(amount),0) AS debt FROM reg_debt_movements`);
-    const debtByParty = all(
+    const debt = await get(`SELECT COALESCE(SUM(amount),0) AS debt FROM reg_debt_movements`);
+    const debtByParty = await all(
       `SELECT cp.name_ru, cp.name_uz, COALESCE(SUM(m.amount),0) AS amount
          FROM reg_debt_movements m JOIN catalog_counterparties cp ON cp.id = m.counterparty_id
         GROUP BY m.counterparty_id ORDER BY ABS(SUM(m.amount)) DESC LIMIT 10`
     );
-    const recent = all(
+    const recent = await all(
       `SELECT d.id, d.type, d.number, d.date, d.status, d.total_amount, d.total_qty,
               w.name_ru AS warehouse, cp.name_ru AS counterparty
          FROM documents d
@@ -57,10 +57,10 @@ function register(router) {
          LEFT JOIN catalog_counterparties cp ON cp.id = d.counterparty_id
         ORDER BY d.id DESC LIMIT 10`
     );
-    const neg = get(
+    const neg = await get(
       `SELECT COUNT(*) AS c FROM reg_stock_balances WHERE qty < 0 ${wh ? 'AND warehouse_id = ?' : ''}`, ...whArgs
     );
-    const chart = all(
+    const chart = await all(
       `SELECT date, SUM(qty_in) AS in_qty, SUM(qty_out) AS out_qty
          FROM reg_stock_movements WHERE 1=1 ${wh ? 'AND warehouse_id = ?' : ''}
         GROUP BY date ORDER BY date DESC LIMIT 30`, ...whArgs
@@ -68,7 +68,7 @@ function register(router) {
 
     // Ishchilar bo'yicha sotuvlar (joriy oy) — limit va bonus uchun
     const month = new Date().toISOString().slice(0, 7);
-    const empSales = all(
+    const empSales = await all(
       `SELECT e.id, e.name_uz, e.name_ru, e.position, e.sales_limit, e.bonus_percent,
               e.base_salary,
               COALESCE(SUM(d.total_amount), 0) AS month_sales,
@@ -87,7 +87,7 @@ function register(router) {
     );
 
     // Kunlik sotuvlar — xodimlar bo'yicha (oxirgi 30 kun)
-    const salesByEmpDay = all(
+    const salesByEmpDay = await all(
       `SELECT d.date, d.employee_id,
               e.name_uz, e.name_ru,
               SUM(d.total_qty) AS qty,
@@ -114,7 +114,7 @@ function register(router) {
   });
 
   // ---------------------------------------------------------- Приход/Расход за период
-  router.get('/api/reports/turnover', (ctx) => {
+  router.get('/api/reports/turnover',async (ctx) => {
     const { from, to } = period(ctx.query);
     const wh = Number(ctx.query.warehouse_id) || 0;
     return all(
@@ -131,10 +131,10 @@ function register(router) {
   });
 
   // ---------------------------------------------------------- Прибыль (foyda)
-  router.get('/api/reports/profit', (ctx) => {
+  router.get('/api/reports/profit',async (ctx) => {
     const { from, to } = period(ctx.query);
     const wh = Number(ctx.query.warehouse_id) || 0;
-    const byProduct = all(
+    const byProduct = await all(
       `SELECT p.id, p.sku, p.name_ru, p.name_uz, u.code AS unit,
               SUM(CASE WHEN m.qty_out > 0 THEN m.qty_out ELSE 0 END) AS sold_qty,
               SUM(CASE WHEN m.qty_out > 0 THEN m.amount ELSE 0 END) AS revenue,
@@ -162,7 +162,7 @@ function register(router) {
   });
 
   // ---------------------------------------------------------- Oтчёт по продажам
-  router.get('/api/reports/sales', (ctx) => {
+  router.get('/api/reports/sales',async (ctx) => {
     const { from, to } = period(ctx.query);
     const wh = Number(ctx.query.warehouse_id) || 0;
     return all(
@@ -185,7 +185,7 @@ function register(router) {
   });
 
   // ---------------------------------------------------------- Oтчёт по закупкам
-  router.get('/api/reports/purchases', (ctx) => {
+  router.get('/api/reports/purchases',async (ctx) => {
     const { from, to } = period(ctx.query);
     const wh = Number(ctx.query.warehouse_id) || 0;
     return all(
@@ -204,7 +204,7 @@ function register(router) {
   });
 
   // ---------------------------------------------------------- Инвентаризация — расхождения
-  router.get('/api/reports/inventory-diff', (ctx) => {
+  router.get('/api/reports/inventory-diff',async (ctx) => {
     const { from, to } = period(ctx.query);
     const wh = Number(ctx.query.warehouse_id) || 0;
     return all(
@@ -226,7 +226,7 @@ function register(router) {
   });
 
   // ---------------------------------------------------------- Списание (yo'qotish)
-  router.get('/api/reports/writeoff', (ctx) => {
+  router.get('/api/reports/writeoff',async (ctx) => {
     const { from, to } = period(ctx.query);
     const wh = Number(ctx.query.warehouse_id) || 0;
     return all(
@@ -247,20 +247,20 @@ function register(router) {
   });
 
   // ---------------------------------------------------------- Движения по товару (карточка)
-  router.get('/api/register/stock/product-card', (ctx) => {
+  router.get('/api/register/stock/product-card',async (ctx) => {
     const pid = Number(ctx.query.product_id);
     if (!pid) throw bad('product_id kerak / Требуется product_id');
     const wh = Number(ctx.query.warehouse_id) || 0;
     const to = ctx.query.date_to || '9999-12-31';
     const from = ctx.query.date_from || '0000-01-01';
 
-    const opening = get(
+    const opening = await get(
       `SELECT COALESCE(SUM(qty_in - qty_out),0) AS qty, COALESCE(SUM(amount),0) AS amount
          FROM reg_stock_movements
         WHERE product_id = ? AND date < ? ${wh ? 'AND warehouse_id = ?' : ''}`,
       ...(wh ? [pid, from, wh] : [pid, from])
     );
-    const rows = all(
+    const rows = await all(
       `SELECT m.*, d.number AS doc_number, d.type AS doc_type, d.base_type, d.note AS doc_note,
               w.name_ru AS warehouse, w.name_uz AS warehouse_uz, l.code AS location_code
          FROM reg_stock_movements m
@@ -277,12 +277,12 @@ function register(router) {
       run += m.qty_in - m.qty_out;
       lines.push({ ...m, balance: run });
     }
-    const p = get('SELECT * FROM catalog_products WHERE id=?', pid);
+    const p = await get('SELECT * FROM catalog_products WHERE id=?', pid);
     return { product: p, opening, lines, closing: { qty: run } };
   });
 
   // ---------------------------------------------------------- Jurnal (amallar)
-  router.get('/api/reports/audit', (ctx) => {
+  router.get('/api/reports/audit',async (ctx) => {
     return all(
       `SELECT * FROM audit_log ORDER BY id DESC LIMIT ?`,
       Math.min(Number(ctx.query.limit) || 200, 2000)

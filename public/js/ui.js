@@ -220,9 +220,10 @@ export function buildForm(fields, values = {}, refs = {}) {
       form.append(fieldWrap(f, input));
       if (f.hint) input.parentElement.append(h('div', { class: 'hint', text: tl(f.hint) }));
     } else {
-      // text, number, money, int, date, textarea va h.k.
+      // text, number, money, int, date, textarea, password va h.k.
       const inputType = f.type === 'money' ? 'number' : f.type === 'int' ? 'number' : f.type === 'number' ? 'number'
-        : f.type === 'date' ? 'date' : f.type === 'textarea' ? 'textarea' : 'text';
+        : f.type === 'date' ? 'date' : f.type === 'textarea' ? 'textarea'
+        : f.type === 'password' ? 'password' : 'text';
       input = h(inputType === 'textarea' ? 'textarea' : 'input', {
         id, type: inputType === 'textarea' ? null : inputType,
         step: f.step || (f.type === 'int' ? '1' : f.type === 'money' ? '0.01' : 'any'),
@@ -331,7 +332,8 @@ export function buildForm(fields, values = {}, refs = {}) {
 }
 
 function fieldWrap(f, input) {
-  return h('div', { class: 'form-field' + (f.type === 'textarea' ? ' span2' : '') },
+  const wide = f.type === 'textarea' || f.type === 'password';
+  return h('div', { class: 'form-field' + (wide ? ' span2' : '') },
     h('label', { for: input.id },
       tl(f.label), f.required ? h('span', { class: 'req', text: '*' }) : null),
     input

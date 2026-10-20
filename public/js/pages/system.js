@@ -10,6 +10,8 @@ import {
 import { loadMeta, loadRefs } from './catalog.js';
 import { FEATURES, FEATURE_KEYS, FEATURE_GROUPS, loadFeatures, feat, toSettings } from '../features.js';
 import { buildMenu } from '../app.js';
+import { attachPasswordMeter } from '../password-ui.js';
+import { analyzePassword, passwordMessage } from '../password.mjs';
 
 // ============================================================ FOYDALANUVCHILAR
 export async function usersPage(root) {
@@ -67,11 +69,15 @@ export async function usersPage(root) {
         options: roles.map((r) => ({ value: r.value, label: r.label })),
         label: { uz: 'Rol', ru: 'Роль' } },
       { name: 'warehouse_id', type: 'ref', ref: 'warehouses', label: { uz: 'Ombor', ru: 'Склад' } },
-      { name: 'password', type: 'text', label: { uz: row ? 'Yangi parol (ixtiyoriy)' : 'Parol', ru: row ? 'Новый пароль (необязательно)' : 'Пароль' } },
+      { name: 'password', type: 'password', required: !row,
+        label: { uz: row ? 'Yangi parol (ixtiyoriy)' : 'Parol', ru: row ? 'Новый пароль (необязательно)' : 'Пароль' } },
       { name: 'is_active', type: 'bool', label: { uz: 'Faol', ru: 'Активен' } },
     ];
     const form = buildForm(fields, row ? { ...row, password: '' } : { is_active: 1, role: 'OBSERVER' },
       await loadRefs());
+
+    // Parol siyosati — jonli tekshiruv ro'yxati
+    const pwMeter = attachPasswordMeter(form.inputs.password);
 
     const modalBody = h('div', {}, form.form);
     const featureSelector = createUserFeatureSelector(
@@ -96,6 +102,22 @@ export async function usersPage(root) {
         btn(t('save'), { cls: 'btn-primary', onClick: async () => {
           const v = form.collect();
           if (!v.password) delete v.password;
+
+          // Parol siyosati — xato bo'lsa saqlanmaydi
+          if (v.password) {
+            const r = analyzePassword(v.password);
+            if (!r.ok) {
+              toast(passwordMessage(r), 'err');
+              form.inputs.password.focus();
+              pwMeter.update();
+              return;
+            }
+          } else if (!row) {
+            toast(getLang() === 'uz' ? 'Parol kiritish shart' : 'Введите пароль', 'err');
+            form.inputs.password.focus();
+            return;
+          }
+
           if (!form.validate()) return;
           v.allowed_features = featureSelector.getAllowed();
           try {
@@ -735,6 +757,14 @@ function changePassword() {
     actions: (close) => [
       btn(t('cancel'), { onClick: close }),
       btn(t('save'), { cls: 'btn-primary', onClick: async () => {
+        // Parol siyosati
+        const r = analyzePassword(newP.value);
+        if (!r.ok) {
+          toast(passwordMessage(r), 'err');
+          newP.focus();
+          pwMeter.update();
+          return;
+        }
         if (newP.value !== repP.value) { toast(getLang() === 'uz' ? 'Parollar mos emas' : 'Пароли не совпадают', 'err'); return; }
         try {
           await api.post('/api/auth/password', { old_password: oldP.value, new_password: newP.value });
@@ -743,6 +773,8 @@ function changePassword() {
       } }),
     ],
   });
+  // Parol siyosati — jonli tekshiruv ro'yxati
+  const pwMeter = attachPasswordMeter(newP);
 }
 
 // ============================================================ IMPORT / EXPORT

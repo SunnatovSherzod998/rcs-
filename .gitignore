@@ -8,3 +8,6 @@ data/backups/
 .DS_Store
 Thumbs.db
 .env
+.env.local
+.vercel
+data/uploads/
