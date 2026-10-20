@@ -3,7 +3,7 @@
  */
 import { api, auth, onAuthChange, getWarehouseFilter, setWarehouseFilter } from './api.js';
 import { t, tl, getLang, toggleLang } from './i18n.js';
-import { h, spinner } from './ui.js';
+import { h, spinner, attachPasswordToggle } from './ui.js';
 
 import { dashboard } from './pages/dashboard.js';
 import { posPage } from './pages/pos.js';
@@ -317,6 +317,8 @@ function applyLang() {
   $('btnLogin').textContent = t('sign_in');
   $('logoutBtn').textContent = t('logout');
   $('langBtn').textContent = uz ? 'RU' : 'UZ';
+  // Parol tugmasi sarlavhani yangilash
+  $('lgPass')?._pwToggle?.update();
   const u = auth.user;
   $('userChip').replaceChildren(
     h('span', { text: '👤' }),
@@ -327,6 +329,9 @@ function applyLang() {
 // ------------------------------------------------------------ BOOT
 
 window.addEventListener('hashchange', () => { if (auth.isAuthed()) render(); });
+
+// Login parol maydonida ko'rsatish / yashirish tugmasi
+attachPasswordToggle($('lgPass'));
 
 $('loginForm').addEventListener('submit', async (e) => {
   e.preventDefault();

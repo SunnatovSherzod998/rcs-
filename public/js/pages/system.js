@@ -5,7 +5,7 @@ import { api, auth } from '../api.js';
 import { t, tl, getLang, fn } from '../i18n.js';
 import {
   h, card, dataTable, pageHead, btn, iconBtn, modal, buildForm, confirmDialog,
-  toast, spinner, num, fmtDate,
+  toast, spinner, num, fmtDate, attachPasswordToggle,
 } from '../ui.js';
 import { loadMeta, loadRefs } from './catalog.js';
 import { FEATURES, FEATURE_KEYS, FEATURE_GROUPS, loadFeatures, feat, toSettings } from '../features.js';
@@ -747,13 +747,23 @@ function changePassword() {
   const oldP = h('input', { type: 'password' });
   const newP = h('input', { type: 'password' });
   const repP = h('input', { type: 'password' });
+
+  const oldF = h('div', { class: 'form-field span2' },
+    h('label', { text: getLang() === 'uz' ? 'Eski parol' : 'Старый пароль' }), oldP);
+  const newF = h('div', { class: 'form-field span2' },
+    h('label', { text: getLang() === 'uz' ? 'Yangi parol' : 'Новый пароль' }), newP);
+  const repF = h('div', { class: 'form-field span2' },
+    h('label', { text: getLang() === 'uz' ? 'Tasdiqlash' : 'Подтверждение' }), repP);
+
+  // Parolni ko'rsatish / yashirish tugmalari (maydonlar DOM'ga qo'yilgandan keyin)
+  attachPasswordToggle(oldP);
+  attachPasswordToggle(newP);
+  attachPasswordToggle(repP);
+
   const m = modal({
     title: getLang() === 'uz' ? 'Parolni o‘zgartirish' : 'Смена пароля',
     width: 460,
-    body: h('div', { class: 'form-grid' },
-      h('div', { class: 'form-field span2' }, h('label', { text: getLang() === 'uz' ? 'Eski parol' : 'Старый пароль' }), oldP),
-      h('div', { class: 'form-field span2' }, h('label', { text: getLang() === 'uz' ? 'Yangi parol' : 'Новый пароль' }), newP),
-      h('div', { class: 'form-field span2' }, h('label', { text: getLang() === 'uz' ? 'Tasdiqlash' : 'Подтверждение' }), repP)),
+    body: h('div', { class: 'form-grid' }, oldF, newF, repF),
     actions: (close) => [
       btn(t('cancel'), { onClick: close }),
       btn(t('save'), { cls: 'btn-primary', onClick: async () => {

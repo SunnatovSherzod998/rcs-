@@ -10,6 +10,8 @@ export const STR = {
   logout:          ['Chiqish', 'Выход'],
   username:        ['Login', 'Логин'],
   password:        ['Parol', 'Пароль'],
+  show_password:   ['Parolni ko‘rsatish', 'Показать пароль'],
+  hide_password:   ['Parolni yashirish', 'Скрыть пароль'],
   login_hint:      ['admin / admin', 'admin / admin'],
   sign_in:         ['Tizimga kiritish', 'Войти'],
   loading:         ['Yuklanmoqda…', 'Загрузка…'],

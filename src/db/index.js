@@ -1,14 +1,18 @@
 'use strict';
 /**
- * Ma'lumotlar bazasi qatlami — dual-driver.
+ * Ma'lumotlar bazasi qatlami — ko'p driverli.
  *
- *   • LOKAL  : node:sqlite (DatabaseSync) — faylda, tez, sinxron
- *   • BULUT  : @libsql/client (Turso)      — HTTP orqali, async
+ *   • POSTGRES (Supabase / Neon / Render) — pg
+ *   • TURSO   (libSQL)                   — @libsql/client
+ *   • LOKAL   (node:sqlite)              — node:sqlite
  *
- * Barcha funksiyalar ASYNC qaytaradi (`await db.all(...)`).
- * node:sqlite sinxron bo'lsa ham, async funksiya ichida to'g'ri ishlaydi.
+ * Tanlov o'zgaruvchilar orqali:
+ *   SUPABASE_DATABASE_URL / DATABASE_URL  → Postgres
+ *   TURSO_DATABASE_URL                   → Turso
+ *   aks holda                            → lokal fayl
  *
- * Tanlov: TURSO_DATABASE_URL mavjud bo'lsa bulut, aks holda lokal fayl.
+ * SQL yozilishi SQLite uslubida (`?` placeholder). Postgres uchun
+ * `toPg()` funksiyasi SQL'ni avtomatik konvertatsiya qiladi.
  */
 const fs = require('node:fs');
 const path = require('node:path');
@@ -17,50 +21,102 @@ const { hashPassword } = require('../lib/crypto');
 const DATA_DIR = process.env.OMBOR_DATA_DIR
   || (process.env.VERCEL ? '/tmp/ombor' : path.join(__dirname, '..', '..', 'data'));
 const DB_FILE = process.env.OMBOR_DB || path.join(DATA_DIR, 'ombor.db');
-const SCHEMA_FILE = path.join(__dirname, 'schema.sql');
+const SCHEMA_SQLITE = path.join(__dirname, 'schema.sql');
+const SCHEMA_PG = path.join(__dirname, 'schema.pg.sql');
 
-const TURSO_URL = process.env.TURSO_DATABASE_URL || process.env.OMBOR_DB_URL || '';
-const TURSO_TOKEN = process.env.TURSO_AUTH_TOKEN || process.env.OMBOR_DB_TOKEN || '';
-const REMOTE = Boolean(TURSO_URL);
+const PG_URL = process.env.SUPABASE_DATABASE_URL || process.env.DATABASE_URL || process.env.POSTGRES_URL || '';
+const PG_KEY = process.env.SUPABASE_KEY || process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_KEY || '';
+const TURSO_URL = process.env.TURSO_DATABASE_URL || '';
+const TURSO_TOKEN = process.env.TURSO_AUTH_TOKEN || '';
 
-// Serverless muhitda fayl yo'yligi (odatda /tmp) — lokal sinxron driver uchun
+const DRIVER = PG_URL ? 'postgres' : (TURSO_URL ? 'turso' : 'sqlite');
+
 fs.mkdirSync(path.dirname(DB_FILE), { recursive: true });
 
-/** Faol driver: { exec, all, run } — barchasi async */
+// ---------------------------------------------------------------- SQL konvertatsiyasi
+
+/** SQLite SQL -> Postgres SQL (`?` -> `$1`, maxsus funksiyalar) */
+function toPg(sql) {
+  let s = sql;
+  // funksiyalar
+  s = s.replace(/datetime\('now','localtime'\)/gi, 'CURRENT_TIMESTAMP');
+  s = s.replace(/datetime\('now'\)/gi, 'CURRENT_TIMESTAMP');
+  s = s.replace(/date\('now',\s*'-\s*(\d+)\s+days'\)/gi, "(CURRENT_DATE - INTERVAL '$1 days')");
+  s = s.replace(/date\('now'\)/gi, 'CURRENT_DATE');
+  s = s.replace(/INSERT\s+OR\s+IGNORE\s+INTO/gi, 'INSERT INTO');
+  // placeholderlar: ? -> $1, $2, ...
+  let n = 0;
+  s = s.replace(/\?/g, () => `$${++n}`);
+  return { sql: s, count: n };
+}
+
+// ---------------------------------------------------------------- driver
+
 let drv = null;
 
 function initDriver() {
   if (drv) return drv;
 
-  if (REMOTE) {
-    // --- Bulut: Turso / libSQL
+  if (DRIVER === 'postgres') {
+    const { Pool } = require('pg');
+    const pool = new Pool({
+      connectionString: PG_URL,
+      ssl: PG_URL.includes('localhost') || PG_URL.includes('127.0.0.1') ? false : { rejectUnauthorized: false },
+      max: 5,
+      idleTimeoutMillis: 10000,
+    });
+    drv = {
+      kind: 'postgres',
+      exec: async (sql) => { await pool.query(sql); },
+      all: async (sql, p) => {
+        const { sql: q, count } = toPg(sql);
+        if (count !== p.length) throw new Error(`SQL parametr soni mos emas (${count} vs ${p.length}): ${sql.slice(0, 80)}`);
+        const r = await pool.query(q, p);
+        return r.rows;
+      },
+      run: async (sql, p) => {
+        let q = sql;
+        // INSERT ... RETURNING id (Postgres ID qaytarish uchun)
+        if (/^\s*INSERT\s+INTO/i.test(sql) && !/RETURNING/i.test(sql) && !/ON\s+CONFLICT/i.test(sql)) {
+          q = sql.replace(/\s*;?\s*$/, ' RETURNING id');
+        }
+        const conv = toPg(q);
+        if (conv.count !== p.length) {
+          throw new Error(`SQL parametr soni mos emas (${conv.count} vs ${p.length}): ${sql.slice(0, 90)}`);
+        }
+        const r = await pool.query(conv.sql, p);
+        const newId = r.rows && r.rows[0] && r.rows[0].id !== undefined ? Number(r.rows[0].id) : r.rowCount;
+        return { lastInsertRowid: newId, changes: r.rowCount };
+      },
+      close: () => { try { pool.end(); } catch { /* noop */ } },
+    };
+  } else if (DRIVER === 'turso') {
     const { createClient } = require('@libsql/client');
     const client = createClient({ url: TURSO_URL, authToken: TURSO_TOKEN });
     drv = {
-      remote: true,
+      kind: 'turso',
       exec: async (sql) => { await client.executeMultiple(sql); },
-      all: async (sql, p) => {
-        const r = await client.execute({ sql, args: p });
-        return r.rows;
-      },
+      all: async (sql, p) => (await client.execute({ sql, args: p })).rows,
       run: async (sql, p) => {
         const r = await client.execute({ sql, args: p });
         return { lastInsertRowid: r.lastInsertRowid, changes: r.rowsAffected };
       },
-      close: () => { /* turso: alohida ulanish yo'q */ },
+      close: () => { /* noop */ },
     };
   } else {
-    // --- Lokal: node:sqlite (Node.js 22.5+)
     let DatabaseSync;
     try {
       ({ DatabaseSync } = require('node:sqlite'));
     } catch (e) {
-      console.error('\n[ERROR] node:sqlite topilmadi. Node.js 22.5+ kerak (LTS 24 tavsiya etiladi).');
+      console.error('\n[ERROR] node:sqlite topilmadi. Node.js 22.5+ kerak (LTS 24 tavsiya etiladi).\n');
       throw e;
     }
     const d = new DatabaseSync(DB_FILE);
+    d.exec('PRAGMA foreign_keys = ON;');
+    d.exec('PRAGMA journal_mode = WAL;');
+    d.exec('PRAGMA busy_timeout = 5000;');
     drv = {
-      remote: false,
+      kind: 'sqlite',
       exec: async (sql) => { d.exec(sql); },
       all: async (sql, p) => d.prepare(sql).all(...p),
       run: async (sql, p) => {
@@ -73,104 +129,7 @@ function initDriver() {
   return drv;
 }
 
-// ------------------------------------------------------------------ schema
-
-const STATEMENT_CACHE = new Map();
-
-/** PRAGMA va boshqa "multiple statements" — faqat init da ishlatiladi */
-async function execRaw(sql) {
-  const d = initDriver();
-  await d.exec(sql);
-}
-
-/** Jadvalni yaratadi (idempotent) */
-async function migrate() {
-  await execRaw(fs.readFileSync(SCHEMA_FILE, 'utf8'));
-  await migrateColumns();
-}
-
-/**
- * Eski bazalarda yangi ustunlar qo'shilishi uchun.
- * (CREATE TABLE IF NOT EXISTS mavjud jadvalni o'zgartirmaydi)
- */
-const COLUMN_MIGRATIONS = [
-  ['catalog_locations', 'zone', 'TEXT'],
-  ['catalog_locations', 'row_no', 'INTEGER'],
-  ['catalog_locations', 'level_no', 'INTEGER DEFAULT 1'],
-  ['catalog_locations', 'pos', 'INTEGER'],
-  ['catalog_locations', 'capacity', 'REAL DEFAULT 0'],
-  ['catalog_locations', 'cell_w', 'REAL DEFAULT 1'],
-  ['catalog_locations', 'cell_d', 'REAL DEFAULT 1'],
-  ['catalog_locations', 'room_id', 'INTEGER'],
-  ['catalog_locations', 'rack_id', 'INTEGER'],
-  ['catalog_warehouses', 'map_zones', 'TEXT'],
-  ['catalog_warehouses', 'map_rows', 'INTEGER DEFAULT 4'],
-  ['catalog_warehouses', 'map_levels', 'INTEGER DEFAULT 2'],
-  ['catalog_warehouses', 'map_slots', 'INTEGER DEFAULT 10'],
-  ['catalog_warehouses', 'is_pick_face', 'INTEGER NOT NULL DEFAULT 0'],
-  ['catalog_warehouses', 'map_cols', 'INTEGER DEFAULT 3'],
-  ['catalog_warehouses', 'map_rooms', 'INTEGER DEFAULT 6'],
-  ['catalog_products', 'image_url', 'TEXT'],
-  ['catalog_products', 'color', 'TEXT'],
-  ['document_lines', 'discount', 'REAL DEFAULT 0'],
-  ['document_lines', 'dest_location_id', 'INTEGER'],
-  ['users', 'allowed_features', 'TEXT'],
-  ['catalog_employees', 'base_salary', 'REAL NOT NULL DEFAULT 0'],
-  ['catalog_employees', 'sales_limit', 'REAL NOT NULL DEFAULT 0'],
-  ['catalog_employees', 'bonus_percent', 'REAL NOT NULL DEFAULT 0'],
-  ['catalog_employees', 'bonus_total', 'REAL NOT NULL DEFAULT 0'],
-  ['users', 'employee_id', 'INTEGER'],
-];
-
-async function migrateColumns() {
-  for (const [table, column, type] of COLUMN_MIGRATIONS) {
-    const cols = await all(`PRAGMA table_info(${table})`);
-    if (!cols.length) continue;                       // jadval yo'q
-    if (cols.some((c) => c.name === column)) continue;
-    await execRaw(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
-  }
-  // yangi ustunlarga bog'liq indekslar (faqat mavjudlik tekshiriladi)
-  for (const sql of [
-    'CREATE INDEX IF NOT EXISTS ix_loc_map ON catalog_locations(warehouse_id, zone, row_no, level_no, pos)',
-    'CREATE INDEX IF NOT EXISTS ix_loc_room ON catalog_locations(warehouse_id, room_id, rack_id, level_no, pos)',
-    'CREATE INDEX IF NOT EXISTS ix_rooms_wh ON catalog_rooms(warehouse_id, floor, pos_y, pos_x)',
-  ]) {
-    try { await execRaw(sql); } catch { /* eski bazada ustun yo'q */ }
-  }
-}
-
-// ------------------------------------------------------------------ tranzaksiya
-
-/**
- * Tranzaksiya. Turso HTTP orqali ishlaydi va `tx()` ichida async ishlashni
- * qo'llamaydi (chunki connection session bog'liq) — shuning uchun bulutda
- * tranzaksiya "yumshoq" rejimda ishlaydi (BEGIN/COMMIT bayroqlari yuboriladi).
- */
-async function tx(fn) {
-  const d = initDriver();
-  if (d.remote) {
-    await execRaw('BEGIN');
-    try {
-      const r = await fn();
-      await execRaw('COMMIT');
-      return r;
-    } catch (err) {
-      try { await execRaw('ROLLBACK'); } catch { /* noop */ }
-      throw err;
-    }
-  }
-  await execRaw('BEGIN IMMEDIATE');
-  try {
-    const r = await fn();
-    await execRaw('COMMIT');
-    return r;
-  } catch (err) {
-    try { await execRaw('ROLLBACK'); } catch { /* noop */ }
-    throw err;
-  }
-}
-
-// ------------------------------------------------------------------ helpers
+// ---------------------------------------------------------------- helpers
 
 const all = async (sql, ...p) => initDriver().all(sql, p);
 const get = async (sql, ...p) => {
@@ -204,21 +163,8 @@ function buildWhere(filters = {}, allowed = []) {
   return { clause: parts.length ? 'WHERE ' + parts.join(' AND ') : '', params };
 }
 
-const NEXT_LOCK = { v: 0 };
-
 async function nextNumber(name) {
-  const d = initDriver();
-  // Noldan tiklaymiz — upsert bilan
   await run('INSERT INTO counters(name, value) VALUES (?, 0) ON CONFLICT(name) DO NOTHING', name);
-  if (d.remote) {
-    // Turso: atomic increment
-    const r = await run(
-      `INSERT INTO counters(name, value) VALUES (?, 1)
-       ON CONFLICT(name) DO UPDATE SET value = value + 1
-       RETURNING value`, name);
-    const rows = await all('SELECT value FROM counters WHERE name = ?', name);
-    return rows[0].value;
-  }
   await run('UPDATE counters SET value = value + 1 WHERE name = ?', name);
   const row = await get('SELECT value FROM counters WHERE name = ?', name);
   return row.value;
@@ -245,7 +191,100 @@ async function setSetting(key, value) {
   );
 }
 
-// ------------------------------------------------------------------ seed
+// ---------------------------------------------------------------- schema
+
+const COLUMN_MIGRATIONS = [
+  ['catalog_locations', 'zone', 'TEXT'],
+  ['catalog_locations', 'row_no', 'INTEGER'],
+  ['catalog_locations', 'level_no', 'INTEGER DEFAULT 1'],
+  ['catalog_locations', 'pos', 'INTEGER'],
+  ['catalog_locations', 'capacity', 'REAL DEFAULT 0'],
+  ['catalog_locations', 'cell_w', 'REAL DEFAULT 1'],
+  ['catalog_locations', 'cell_d', 'REAL DEFAULT 1'],
+  ['catalog_locations', 'room_id', 'INTEGER'],
+  ['catalog_locations', 'rack_id', 'INTEGER'],
+  ['catalog_warehouses', 'map_zones', 'TEXT'],
+  ['catalog_warehouses', 'map_rows', 'INTEGER DEFAULT 4'],
+  ['catalog_warehouses', 'map_levels', 'INTEGER DEFAULT 2'],
+  ['catalog_warehouses', 'map_slots', 'INTEGER DEFAULT 10'],
+  ['catalog_warehouses', 'is_pick_face', 'INTEGER NOT NULL DEFAULT 0'],
+  ['catalog_warehouses', 'map_cols', 'INTEGER DEFAULT 3'],
+  ['catalog_warehouses', 'map_rooms', 'INTEGER DEFAULT 6'],
+  ['catalog_products', 'image_url', 'TEXT'],
+  ['catalog_products', 'color', 'TEXT'],
+  ['document_lines', 'discount', 'REAL DEFAULT 0'],
+  ['document_lines', 'dest_location_id', 'INTEGER'],
+  ['users', 'allowed_features', 'TEXT'],
+  ['catalog_employees', 'base_salary', 'REAL NOT NULL DEFAULT 0'],
+  ['catalog_employees', 'sales_limit', 'REAL NOT NULL DEFAULT 0'],
+  ['catalog_employees', 'bonus_percent', 'REAL NOT NULL DEFAULT 0'],
+  ['catalog_employees', 'bonus_total', 'REAL NOT NULL DEFAULT 0'],
+  ['users', 'employee_id', 'INTEGER'],
+];
+
+async function execRaw(sql) {
+  await initDriver().exec(sql);
+}
+
+async function migrate() {
+  const d = initDriver();
+  if (d.kind === 'postgres') {
+    await execRaw(fs.readFileSync(SCHEMA_PG, 'utf8'));
+  } else {
+    await execRaw(fs.readFileSync(SCHEMA_SQLITE, 'utf8'));
+  }
+  await migrateColumns();
+}
+
+async function migrateColumns() {
+  const d = initDriver();
+  for (const [table, column, type] of COLUMN_MIGRATIONS) {
+    let exists = false;
+    if (d.kind === 'postgres') {
+      const r = await d.all(
+        `SELECT column_name FROM information_schema.columns
+          WHERE table_name = ? AND column_name = ?`, table, column);
+      exists = r.length > 0;
+    } else {
+      const cols = await all(`PRAGMA table_info(${table})`);
+      if (!cols.length) continue;
+      exists = cols.some((c) => c.name === column);
+    }
+    if (exists) continue;
+    try {
+      await execRaw(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+    } catch { /* allaqon bor */ }
+  }
+  for (const sql of [
+    'CREATE INDEX IF NOT EXISTS ix_loc_map ON catalog_locations(warehouse_id, zone, row_no, level_no, pos)',
+    'CREATE INDEX IF NOT EXISTS ix_loc_room ON catalog_locations(warehouse_id, room_id, rack_id, level_no, pos)',
+    'CREATE INDEX IF NOT EXISTS ix_rooms_wh ON catalog_rooms(warehouse_id, floor, pos_y, pos_x)',
+  ]) {
+    try { await execRaw(sql); } catch { /* eski bazada ustun yo'q */ }
+  }
+}
+
+// ---------------------------------------------------------------- tranzaksiya
+
+async function tx(fn) {
+  const d = initDriver();
+  if (d.kind === 'postgres') {
+    // Postgres: har bir so'rov o'z tranzaksiyasida (autocommit).
+    // Qo'lda BEGIN/COMMIT ishlatilmaydi — pg Pool bilan ishlash xavfsizroq.
+    return fn();
+  }
+  await execRaw('BEGIN');
+  try {
+    const r = await fn();
+    await execRaw('COMMIT');
+    return r;
+  } catch (err) {
+    try { await execRaw('ROLLBACK'); } catch { /* noop */ }
+    throw err;
+  }
+}
+
+// ---------------------------------------------------------------- seed
 
 async function seed() {
   const has = async (t) => {
@@ -253,7 +292,6 @@ async function seed() {
     return r.c > 0;
   };
 
-  // Валюты
   if (!await has('catalog_currencies')) {
     const cur = [
       ['UZS', 'O‘zbek so‘mi', 'Узбекский сум', 1, 1],
@@ -266,24 +304,18 @@ async function seed() {
     }
   }
 
-  // Единицы измерения
   if (!await has('catalog_units')) {
     const units = [
-      ['DONA', 'dona', 'штука', 1],
-      ['KG', 'kilogramm', 'килограмм', 1],
-      ['M', 'metr', 'метр', 1],
-      ['M2', 'kvadrat metr', 'квадратный метр', 1],
-      ['M3', 'kub metr', 'кубический метр', 1],
-      ['L', 'litr', 'литр', 1],
-      ['PACK', 'quti', 'коробка', 1],
-      ['UP', 'dona (o‘ram)', 'штука (упаковка)', 1],
+      ['DONA', 'dona', 'штука', 1], ['KG', 'kilogramm', 'килограмм', 1],
+      ['M', 'metr', 'метр', 1], ['M2', 'kvadrat metr', 'квадратный метр', 1],
+      ['M3', 'kub metr', 'кубический метр', 1], ['L', 'litr', 'литр', 1],
+      ['PACK', 'quti', 'коробка', 1], ['UP', 'dona (o‘ram)', 'штука (упаковка)', 1],
     ];
     for (const u of units) {
       await run('INSERT INTO catalog_units (code, name_uz, name_ru, base_unit_id, ratio) VALUES (?,?,?,NULL,?)', ...u);
     }
   }
 
-  // Склады
   if (!await has('catalog_warehouses')) {
     await run(`INSERT INTO catalog_warehouses (code, name_uz, name_ru, kind, address, phone, is_negative_allowed)
          VALUES ('MAIN','Markaziy ombor','Центральный склад','STORE','Toshkent, Sergeli tumani','+998 71 000 00 00', 0)`);
@@ -297,7 +329,6 @@ async function seed() {
          SELECT id,'A-01-02','Stellaj 2','Стеллаж 2','RACK' FROM catalog_warehouses WHERE code='MAIN'`);
   }
 
-  // Пользователи
   if (!await has('users')) {
     const wh = await get(`SELECT id FROM catalog_warehouses WHERE code='MAIN'`);
     const pass = process.env.ADMIN_PASSWORD || 'admin';
@@ -306,7 +337,6 @@ async function seed() {
          VALUES (?,?,?,?,?,?)`, 'admin', hash, salt, 'Administrator', 'ADMIN', wh?.id ?? null);
   }
 
-  // Настройки
   if (await getSetting('base_currency') === null) await setSetting('base_currency', 'UZS');
   if (await getSetting('negative_stock_block') === null) await setSetting('negative_stock_block', '1');
   if (await getSetting('default_language') === null) await setSetting('default_language', 'uz');
@@ -321,8 +351,9 @@ async function init() {
 
 module.exports = {
   init, tx, all, get, run, buildWhere, nextNumber, audit,
-  getSetting, setSetting, execRaw,
-  DATA_DIR, DB_FILE, SCHEMA_FILE,
-  isRemote: () => REMOTE,
+  getSetting, setSetting, execRaw, toPg,
+  DATA_DIR, DB_FILE,
+  driver: () => DRIVER,
+  isRemote: () => DRIVER !== 'sqlite',
   close: () => { if (drv) drv.close(); },
 };

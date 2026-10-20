@@ -16,7 +16,7 @@ export function attachPasswordMeter(input, opts = {}) {
   const status = h('div', { class: 'pw-status' });
   const el = h('div', { class: 'pw-meter' }, list, status);
 
-  const field = input.parentElement;
+  const field = input.closest('.form-field') || input.parentElement;
   (field || input).append(el);
 
   const items = new Map();
