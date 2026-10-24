@@ -256,7 +256,7 @@ function assert(cond, label, extra = '') {
   r = await api('POST', '/api/users', { login: 'kassir', password: '123456789012', full_name: 'Kassir', role: 'CASHIER' });
   assert(r.status === 400 && r.json?.error?.code === 'PW_ONLY_DIGITS', 'faqat sonli parol rad etiladi', JSON.stringify(r.json));
   r = await api('POST', '/api/users', { login: 'kassir', password: 'a1b2c3d45678', full_name: 'Kassir', role: 'CASHIER' });
-  assert(r.status === 400 && r.json?.error?.code === 'PW_LOWERCASE', 'kichik harfli parol rad etiladi', JSON.stringify(r.json));
+  assert(r.status === 400 && r.json?.error?.code === 'PW_UPPERCASE', 'katta harfsiz parol rad etiladi', JSON.stringify(r.json));
   r = await api('POST', '/api/users', { login: 'kassir', password: 'A1B2C3D45678', full_name: 'Kassir', role: 'CASHIER' });
   assert(r.status === 200, 'siyosatga mos parol qabul qilindi', JSON.stringify(r.json));
   const adminToken = token;

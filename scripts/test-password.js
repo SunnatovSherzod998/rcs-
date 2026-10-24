@@ -31,8 +31,10 @@ const ok = (cond, msg) => {
     ['admin', 'PW_SHORT', 'juda qisqa parol (5 belgi)'],
     ['1234567890', 'PW_SHORT', '10 belgili parol'],
     ['123456789012', 'PW_ONLY_DIGITS', 'faqat sonlardan iborat'],
-    ['a1b2c3d45678', 'PW_LOWERCASE', 'kichik harflar bilan'],
-    ['A1b2C3d45678', 'PW_LOWERCASE', 'aralash katta/kichik harflar'],
+    ['a1b2c3d45678', 'PW_UPPERCASE', 'katta harfsiz'],
+    ['a1b2c3d4e5f6', 'PW_UPPERCASE', 'faqat kichik harflar bilan'],
+    ['A1b2C3d45678', 'PW_OK', 'aralash katta/kichik harflar'],
+    ['aB2c3D456789', 'PW_OK', 'aralash harflar'],
     ['A1B2C3D45678', 'PW_OK', '8 son + 4 katta harf (12 belgi)'],
     ['12345678ABCD', 'PW_OK', '8 son + 4 katta harf'],
     ['A1B2C3D456789', 'PW_OK', '9 son + 4 katta harf (13 belgi)'],
@@ -66,11 +68,15 @@ const ok = (cond, msg) => {
 
   code = null;
   try { await assertPassword('a1b2c3d45678'); } catch (e) { code = e.code; }
-  ok(code === 'PW_LOWERCASE', 'server kichik harf uchun 400 qaytaradi');
+  ok(code === 'PW_UPPERCASE', 'server katta harfsiz parol uchun 400 qaytaradi');
 
   let thrown = null;
   try { await assertPassword('A1B2C3D45678'); } catch (e) { thrown = e; }
   ok(thrown === null, 'server to‘g‘ri parolni qabul qiladi');
+
+  thrown = null;
+  try { await assertPassword('A1b2C3d45678'); } catch (e) { thrown = e; }
+  ok(thrown === null, 'server aralash katta/kichik harfli parolni qabul qiladi');
 
   console.log(fail ? `\n${fail} ta xato\n` : '\nParol siyosati to‘g‘ri\n');
   process.exit(fail ? 1 : 0);

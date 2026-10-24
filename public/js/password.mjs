@@ -8,7 +8,7 @@
  * Qoidalar:
  *   1) kamida 12 ta belgi                    (минимум 12 символов)
  *   2) faqat sonlardan iborat bo'lmasligi    (не только цифры)
- *   3) barcha harflar KATTA harfda bo'lishi  (буквы только заглавные)
+ *   3) kamida bitta KATTA harf bo'lishi      (минимум одна заглавная буква)
  *   4) tarkib: ~70% sonlar, ~30% harf va belgilar (±1 belgi)
  *      (состав: ~70% цифр, ~30% букв и символов, допуск ±1 символ)
  */
@@ -61,7 +61,8 @@ export function analyzePassword(password) {
 
   const empty = length === 0;
   const onlyDigits = !empty && digits === length;
-  const hasLower = lower > 0;
+  const hasUpper = upper > 0;                   // kamida bitta katta harf shart
+  const hasLower = lower > 0;                   // kichik harflar mumkin
   const compositionOk = empty
     || (digits >= minDigits && digits <= maxDigits);
 
@@ -80,9 +81,9 @@ export function analyzePassword(password) {
     },
     {
       code: 'upper',
-      ok: empty ? null : !hasLower,
-      uz: 'Harflar katta harfda yozilgan',
-      ru: 'Буквы написаны заглавными',
+      ok: empty ? null : hasUpper,
+      uz: 'Kamida bitta katta harf (A-Z)',
+      ru: 'Минимум одна заглавная буква (A-Z)',
     },
     {
       code: 'composition',
@@ -97,7 +98,7 @@ export function analyzePassword(password) {
   const res = {
     password: value, length, digits, letters, upper, lower, symbols, others,
     digitPct, otherPct, minDigits, maxDigits, minOthers, maxOthers,
-    empty, onlyDigits, hasLower, compositionOk, checks,
+    empty, onlyDigits, hasUpper, hasLower, compositionOk, checks,
     ok: false, code: 'PW_EMPTY', uz: '', ru: '',
   };
 
@@ -118,10 +119,10 @@ export function analyzePassword(password) {
     res.ru = 'Пароль слишком простой — только цифры. Добавьте заглавную букву и символ.';
     return res;
   }
-  if (hasLower) {
-    res.code = 'PW_LOWERCASE';
-    res.uz = 'Parolni qiyinlashtiring — harflar katta harfda bo‘lishi kerak.';
-    res.ru = 'Усложните пароль — буквы должны быть заглавными.';
+  if (!hasUpper) {
+    res.code = 'PW_UPPERCASE';
+    res.uz = 'Parolda kamida bitta katta harf (A-Z) bo‘lishi kerak.';
+    res.ru = 'В пароле должна быть хотя бы одна заглавная буква (A-Z).';
     return res;
   }
   if (!compositionOk) {

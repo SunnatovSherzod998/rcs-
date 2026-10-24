@@ -47,8 +47,8 @@ export function attachPasswordMeter(input, opts = {}) {
     // holat qatori
     if (r.empty) {
       status.textContent = L === 'ru'
-        ? `Минимум ${MIN_LENGTH} символов, ${Math.round(DIGIT_TARGET * 100)}% цифр и ${Math.round(OTHER_TARGET * 100)}% букв/символов`
-        : `Kamida ${MIN_LENGTH} ta belgi, ${Math.round(DIGIT_TARGET * 100)}% son va ${Math.round(OTHER_TARGET * 100)}% harf/belgi`;
+        ? `Минимум ${MIN_LENGTH} символов, хотя бы одна заглавная буква, ${Math.round(DIGIT_TARGET * 100)}% цифр и ${Math.round(OTHER_TARGET * 100)}% букв/символов`
+        : `Kamida ${MIN_LENGTH} ta belgi, kamida bitta katta harf, ${Math.round(DIGIT_TARGET * 100)}% son va ${Math.round(OTHER_TARGET * 100)}% harf/belgi`;
       status.className = 'pw-status';
     } else if (r.ok) {
       status.textContent = passwordMessage(r, L);
