@@ -482,16 +482,16 @@ async function register(router) {
       out[k] = { table: v.table, label: v.label, fields: v.fields, search: v.search, ref: v.ref || null, tree: !!v.tree };
     }
     return out;
-  });
+  }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'OBSERVER'] });
 
-  router.get('/api/catalogs/:cat/options', async (ctx) => await options(ctx.params.cat, ctx.query));
-  router.get('/api/catalogs/:cat', async (ctx) => await list(ctx.params.cat, ctx.query));
+  router.get('/api/catalogs/:cat/options', async (ctx) => await options(ctx.params.cat, ctx.query), { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'CASHIER', 'OBSERVER'] });
+  router.get('/api/catalogs/:cat', async (ctx) => await list(ctx.params.cat, ctx.query), { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'CASHIER', 'OBSERVER'] });
   router.get('/api/catalogs/:cat/:id',async (ctx) => {
     const c = getCatalog(ctx.params.cat);
     const row = await get(`SELECT * FROM ${c.table} WHERE id=?`, Number(ctx.params.id));
     if (!row) throw notFound();
     return row;
-  });
+  }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'OBSERVER'] });
   /** Katalog yozish huquqlari: employees -> faqat ADMIN, qolganlari -> catalogs.write */
   function requireWrite(ctx, cat) {
     if (cat === 'employees') {

@@ -63,7 +63,7 @@ async function register(router) {
       ...params
     );
     return { rows, total: tot.c, sum_qty: tot.qty, sum_amount: tot.amount, limit, offset };
-  });
+  }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'CASHIER', 'OBSERVER'] });
 
   // Группировка по товару (все склады в одной строке)
   router.get('/api/register/stock/balances/grouped',async (ctx) => {
@@ -100,7 +100,7 @@ async function register(router) {
          ORDER BY p.sku LIMIT ?`,
       ...params, Math.min(Number(q.limit) || 500, 5000)
     );
-  });
+  }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'CASHIER', 'OBSERVER'] });
 
   // Минимальные остатки / Maximum alert
   router.get('/api/register/stock/below-min',async (ctx) => {
@@ -121,7 +121,7 @@ async function register(router) {
         ORDER BY need DESC LIMIT 500`,
       ...(whId ? [whId] : [])
     );
-  });
+  }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'CASHIER', 'OBSERVER'] });
 
   // ------------------------------------------------------------ ДВИЖЕНИЯ
   router.get('/api/register/stock/movements',async (ctx) => {
@@ -161,7 +161,7 @@ async function register(router) {
          FROM reg_stock_movements m JOIN catalog_products p ON p.id=m.product_id ${w}`, ...params
     );
     return { rows, total: tot.c, sum_in: tot.in_qty, sum_out: tot.out_qty, limit, offset };
-  });
+  }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'CASHIER', 'OBSERVER'] });
 
   // ------------------------------------------------------------ ОБОРОТКА
   // Оборотно-сальдовая ведомость
@@ -208,7 +208,7 @@ async function register(router) {
       ...(whId ? [from, whId, from, to, whId, from, to, whId] : [from, from, to, from, to]),
       ...(q.category_id ? [q.category_id] : [])
     );
-  });
+  }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'CASHIER', 'OBSERVER'] });
 
   // ------------------------------------------------------------ ВЗАИМОРАСЧЁТЫ
   router.get('/api/register/debt/balances',async (ctx) => {
@@ -236,7 +236,7 @@ async function register(router) {
       ...params
     );
     return rows;
-  });
+  }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'CASHIER', 'OBSERVER'] });
 
   router.get('/api/register/debt/movements',async (ctx) => {
     const q = ctx.query;
@@ -255,7 +255,7 @@ async function register(router) {
          ${w} ORDER BY m.date DESC, m.id DESC LIMIT 1000`,
       ...params
     );
-  });
+  }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'CASHIER', 'OBSERVER'] });
 
   // ------------------------------------------------------------ ЦЕНЫ
   router.get('/api/register/prices',async (ctx) => {
@@ -271,7 +271,7 @@ async function register(router) {
         ORDER BY p.sku LIMIT 1000`,
       ...(whId ? [whId] : [])
     );
-  });
+  }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'CASHIER', 'OBSERVER'] });
 }
 
 module.exports = { register };

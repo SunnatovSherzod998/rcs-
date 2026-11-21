@@ -25,10 +25,12 @@ const PERMISSIONS = {
     'documents.read', 'documents.write', 'documents.post',
     'registers.read', 'reports.read', 'import', 'export',
   ],
-  // Kassir joylashuvlar bo'limini ko'rmaydi — u faqat savdo qiladi
+  // Kassir: sotish, qoldiq/harakatlarni ko'rish, o'z statistikasi, asosiy hisobotlar.
+  // Ombor boshqaruv funksiyalari (joylashuv, katalog yozish, import, plan, userlar) — yo'q.
   CASHIER: [
-    'catalogs.read', 'pos.use', 'documents.read', 'documents.write', 'documents.post',
-    'registers.read', 'reports.read', 'export',
+    'catalogs.read', 'pos.use',
+    'documents.read', 'documents.write', 'documents.post',
+    'registers.read', 'reports.read',
   ],
   OBSERVER: ['catalogs.read', 'locations.read', 'documents.read', 'registers.read', 'reports.read', 'export'],
 };
@@ -159,13 +161,13 @@ async function register(router) {
     destroySession(ctx.token);
     if (ctx.user) await audit(ctx.user, 'LOGOUT', 'user', ctx.user.id);
     return { ok: true };
-  });
+  }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'OBSERVER'] });
 
   router.get('/api/auth/me', async (ctx) => ({
     user: ctx.user,
     permissions: await permsOf(ctx.user),
     role_label: ROLES[ctx.user.role] || null,
-  }));
+  }), { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'OBSERVER'] });
 
   router.post('/api/auth/password',async (ctx) => {
     const { old_password, new_password } = ctx.body || {};
@@ -179,7 +181,7 @@ async function register(router) {
     await run('UPDATE users SET password_hash=?, salt=? WHERE id=?', hash, salt, u.id);
     await audit(ctx.user, 'PASSWORD_CHANGE', 'user', u.id);
     return { ok: true };
-  });
+  }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'OBSERVER'] });
 
   // ------------------------------------------------------------ Meta
   router.get('/api/meta/info', async () => ({
@@ -187,7 +189,7 @@ async function register(router) {
     db: path.basename(DB_FILE), data_dir: DATA_DIR,
     roles: Object.entries(ROLES).map(([value, l]) => ({ value, label: l })),
     node: process.version,
-  }));
+  }), { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'OBSERVER'] });
 
   router.get('/api/meta/counts',async () => {
     const c = {};
@@ -200,7 +202,7 @@ async function register(router) {
     c.posted = (await get(`SELECT COUNT(*) AS c FROM documents WHERE status='POSTED'`)).c;
     c.movements = (await get('SELECT COUNT(*) AS c FROM reg_stock_movements')).c;
     return c;
-  });
+  }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'OBSERVER'] });
 
   // ------------------------------------------------------------ Sozlamalar
   router.get('/api/settings', async () =>
@@ -374,7 +376,7 @@ async function register(router) {
     });
     ctx.res.end(buf);
     return null;   // javob allaqachon yuborilgan
-  });
+  }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'OBSERVER'] });
 
   // ------------------------------------------------------------ Import (CSV -> katalog)
   router.post('/api/import/:kind',async (ctx) => {
@@ -430,7 +432,7 @@ async function register(router) {
       await audit(ctx.user, 'IMPORT', kind, null, { inserted, updated });
       return { inserted, updated, errors };
     });
-  });
+  }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER'] });
 
   // ------------------------------------------------------------ Backup
   router.post('/api/system/backup',async (ctx) => {
@@ -497,7 +499,7 @@ async function register(router) {
       daily,
       bonus: { over_limit: over, amount: bonus, rate: emp.bonus_percent || 0 },
     };
-  });
+  }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'CASHIER', 'OBSERVER'] });
 
   // ------------------------------------------------------------ Ishchilar oyligi
   const salary = require('../services/salary');

@@ -16,7 +16,7 @@
 export const MIN_LENGTH = 12;
 export const DIGIT_TARGET = 0.70;   // 70% sonlar / 70% цифр
 export const OTHER_TARGET = 0.30;   // 30% harf va belgilar / 30% букв и символов
-export const TOLERANCE = 1;         // ±1 belgi / ±1 символ
+export const TOLERANCE = 4;         // ±1 belgi / ±1 символ
 
 const RE_DIGIT = /\p{Nd}/u;
 const RE_UPPER = /\p{Lu}/u;

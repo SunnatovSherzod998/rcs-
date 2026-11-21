@@ -84,21 +84,21 @@ async function register(router) {
                         LEFT JOIN catalog_warehouses w ON w.id=d.warehouse_id
                         LEFT JOIN catalog_counterparties cp ON cp.id=d.counterparty_id ${w}`, ...params);
     return { rows, total, limit, offset, sum_amount: sums.amount, sum_qty: sums.qty };
-  });
+  }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'CASHIER', 'OBSERVER'] });
 
   // Bitta hujjat
   router.get('/api/documents/:id', async (ctx) => {
     const doc = await stock.getDocument(Number(ctx.params.id));
     if (!doc) throw bad('Hujjat topilmadi / Документ не найден');
     return doc;
-  });
+  }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'CASHIER', 'OBSERVER'] });
 
   // Yangi
-  router.post('/api/documents', async (ctx) => await stock.createDocument(ctx.body, ctx.user));
+  router.post('/api/documents', async (ctx) => await stock.createDocument(ctx.body, ctx.user), { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'CASHIER'] });
   // Tahrirlash
-  router.put('/api/documents/:id', async (ctx) => await stock.updateDocument(Number(ctx.params.id), ctx.body));
+  router.put('/api/documents/:id', async (ctx) => await stock.updateDocument(Number(ctx.params.id), ctx.body), { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'CASHIER'] });
   // O'chirish
-  router.del('/api/documents/:id', async (ctx) => await stock.deleteDocument(Number(ctx.params.id)));
+  router.del('/api/documents/:id', async (ctx) => await stock.deleteDocument(Number(ctx.params.id)), { roles: ['ADMIN', 'WAREHOUSE_MANAGER'] });
 
   // Провести (kassir ham o'tkazishi mumkin — POS savdo uchun)
   router.post('/api/documents/:id/post', async (ctx) => {
@@ -116,7 +116,7 @@ async function register(router) {
   router.get('/api/documents-meta/types', async () => ({
     types: Object.entries(TYPE_LABELS).map(([value, l]) => ({ value, label: l })),
     reasons: Object.entries(ISSUE_REASONS).map(([value, l]) => ({ value, label: l })),
-  }));
+  }), { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'CASHIER', 'OBSERVER'] });
 
   // Hisobot uchun savdo (sale) hujjatlari bo'yicha
   router.get('/api/documents-lookup/sales',async (ctx) => {
@@ -134,7 +134,7 @@ async function register(router) {
         WHERE ${where.join(' AND ')} ORDER BY d.date DESC, d.number DESC LIMIT 500`,
       ...params
     );
-  });
+  }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'CASHIER', 'OBSERVER'] });
 
   // Avtomatik to'ldirish: SKU yoki barcode bo'yicha qoldiq
   router.get('/api/products-lookup/stock',async (ctx) => {
@@ -157,7 +157,7 @@ async function register(router) {
       ...(whId ? [p.id, whId] : [p.id])
     );
     return { product: p, balances, total_qty: balances.reduce((s, b) => s + b.qty, 0) };
-  });
+  }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'CASHIER', 'OBSERVER'] });
 
   // Barcha tovar + qoldiq (katalog + registr)
   router.get('/api/products-lookup/list',async (ctx) => {
@@ -180,7 +180,7 @@ async function register(router) {
         ORDER BY p.sku LIMIT ?`,
       ...(whId ? [whId, ...params] : params), Math.min(Number(ctx.query.limit) || 100, 1000)
     );
-  });
+  }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'CASHIER', 'OBSERVER'] });
 }
 
 module.exports = { register, TYPE_LABELS, ISSUE_REASONS };

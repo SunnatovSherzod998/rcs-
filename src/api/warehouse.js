@@ -351,7 +351,7 @@ async function register(router) {
     const wh = Number(ctx.query.warehouse_id);
     if (!wh) throw bad('warehouse_id kerak / Требуется warehouse_id');
     return warehouseMap(wh, ctx.query);
-  });
+  }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'OBSERVER'] });
 
   // Skelet yaratish / yangilash
   router.post('/api/warehouse/map/build', async (ctx) => {
@@ -366,20 +366,20 @@ async function register(router) {
     const wh = Number(ctx.query.warehouse_id);
     if (!wh) throw bad('warehouse_id kerak / Требуется warehouse_id');
     return autoPlace(wh, ctx.query);
-  });
+  }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'OBSERVER'] });
 
   // Mahsulot joylashuvi
   router.get('/api/warehouse/product-placement', async (ctx) => {
     const pid = Number(ctx.query.product_id);
     if (!pid) throw bad('product_id kerak / Требуется product_id');
     return productPlacement(pid);
-  });
+  }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'OBSERVER'] });
 
   // Turlar / Brendlar
   router.get('/api/warehouse/by-category', async (ctx) =>
-    await byCategories(Number(ctx.query.warehouse_id) || 0, ctx.query));
+    await byCategories(Number(ctx.query.warehouse_id) || 0, ctx.query), { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'OBSERVER'] });
   router.get('/api/warehouse/by-brand', async (ctx) =>
-    await byBrands(Number(ctx.query.warehouse_id) || 0, ctx.query));
+    await byBrands(Number(ctx.query.warehouse_id) || 0, ctx.query), { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'OBSERVER'] });
 
   // Qisqa: ombor bo'yicha barcha joylar (editor uchun select)
   router.get('/api/warehouse/cells',async (ctx) => {
@@ -396,7 +396,7 @@ async function register(router) {
         ORDER BY l.zone, l.row_no, l.level_no, l.pos LIMIT 2000`,
       wh
     );
-  });
+  }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'OBSERVER'] });
 }
 
 module.exports = {

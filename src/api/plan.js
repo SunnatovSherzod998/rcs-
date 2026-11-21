@@ -493,7 +493,7 @@ async function register(router) {
     const wh = Number(ctx.query.warehouse_id);
     if (!wh) throw bad('warehouse_id kerak / Требуется warehouse_id');
     return buildingPlan(wh, ctx.query);
-  });
+  }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'OBSERVER'] });
 
   router.post('/api/plan/build', async (ctx) => {
     const b = ctx.body || {};
@@ -506,13 +506,13 @@ async function register(router) {
     const id = Number(ctx.query.room_id);
     if (!id) throw bad('room_id kerak / Требуется room_id');
     return roomDetail(id, ctx.query);
-  });
+  }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'OBSERVER'] });
 
   router.get('/api/plan/product', async (ctx) => {
     const id = Number(ctx.query.product_id);
     if (!id) throw bad('product_id kerak / Требуется product_id');
     return productCard(id);
-  });
+  }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'OBSERVER'] });
 
   router.post('/api/plan/room/auto-place', async (ctx) => {
     const id = Number((ctx.body || {}).room_id);
@@ -664,13 +664,13 @@ async function register(router) {
       await run('UPDATE catalog_products SET image_url=? WHERE id=?', url, Number(ctx.body.product_id));
     }
     return { ok: true, url };
-  });
+  }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER'] });
 
-  router.get('/api/plan/uploads', async () => uploadsInfo());
+  router.get('/api/plan/uploads', async () => uploadsInfo(), { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'OBSERVER'] });
 
   router.get('/api/plan/kinds', async () => ({
     kinds: Object.entries(ROOM_KINDS).map(([value, l]) => ({ value, label: l })),
-  }));
+  }), { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'OBSERVER'] });
 }
 
 module.exports = {

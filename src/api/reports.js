@@ -111,7 +111,7 @@ async function register(router) {
       debt_total: debt.debt, debt_by_party: debtByParty, recent, chart,
       emp_sales: empSales, sales_by_emp_day: salesByEmpDay,
     };
-  });
+  }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'CASHIER', 'OBSERVER'] });
 
   // ---------------------------------------------------------- Приход/Расход за период
   router.get('/api/reports/turnover',async (ctx) => {
@@ -128,7 +128,7 @@ async function register(router) {
         GROUP BY date ORDER BY date`,
       ...(wh ? [from, to, wh] : [from, to])
     );
-  });
+  }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'CASHIER', 'OBSERVER'] });
 
   // ---------------------------------------------------------- Прибыль (foyda)
   router.get('/api/reports/profit',async (ctx) => {
@@ -159,7 +159,7 @@ async function register(router) {
       cost += Number(r.cost_out);
     }
     return { from, to, rows: byProduct, total_revenue: revenue, total_cost: cost, total_profit: revenue - cost };
-  });
+  }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'OBSERVER'] });
 
   // ---------------------------------------------------------- Oтчёт по продажам
   router.get('/api/reports/sales',async (ctx) => {
@@ -182,7 +182,7 @@ async function register(router) {
         ORDER BY d.date DESC, d.number DESC LIMIT 1000`,
       ...(wh ? [from, to, wh] : [from, to])
     );
-  });
+  }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'OBSERVER'] });
 
   // ---------------------------------------------------------- Oтчёт по закупкам
   router.get('/api/reports/purchases',async (ctx) => {
@@ -201,7 +201,7 @@ async function register(router) {
         ORDER BY d.date DESC, d.number DESC LIMIT 1000`,
       ...(wh ? [from, to, wh] : [from, to])
     );
-  });
+  }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'OBSERVER'] });
 
   // ---------------------------------------------------------- Инвентаризация — расхождения
   router.get('/api/reports/inventory-diff',async (ctx) => {
@@ -223,7 +223,7 @@ async function register(router) {
         ORDER BY d.date DESC, ABS(l.qty - COALESCE(l.qty_system,0)) DESC LIMIT 1000`,
       ...(wh ? [from, to, wh] : [from, to])
     );
-  });
+  }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'OBSERVER'] });
 
   // ---------------------------------------------------------- Списание (yo'qotish)
   router.get('/api/reports/writeoff',async (ctx) => {
@@ -244,7 +244,7 @@ async function register(router) {
         ORDER BY d.date DESC LIMIT 1000`,
       ...(wh ? [from, to, wh] : [from, to])
     );
-  });
+  }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'OBSERVER'] });
 
   // ---------------------------------------------------------- Движения по товару (карточка)
   router.get('/api/register/stock/product-card',async (ctx) => {
@@ -279,7 +279,7 @@ async function register(router) {
     }
     const p = await get('SELECT * FROM catalog_products WHERE id=?', pid);
     return { product: p, opening, lines, closing: { qty: run } };
-  });
+  }, { roles: ['ADMIN', 'WAREHOUSE_MANAGER', 'OBSERVER'] });
 
   // ---------------------------------------------------------- Jurnal (amallar)
   router.get('/api/reports/audit',async (ctx) => {
@@ -287,7 +287,7 @@ async function register(router) {
       `SELECT * FROM audit_log ORDER BY id DESC LIMIT ?`,
       Math.min(Number(ctx.query.limit) || 200, 2000)
     );
-  });
+  }, { roles: ['ADMIN'] });
 }
 
 module.exports = { register };
